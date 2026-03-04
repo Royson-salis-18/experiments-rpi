@@ -9,10 +9,12 @@ import ExperimentsPage from "./pages/ExperimentsPage";
 import Protected from "./components/Protected";
 import AdminRoute from "./components/auth/AdminRoute";
 import { HashRouter, Routes, Route } from "react-router-dom";
+import VirtualKeyboard from "./components/VirtualKeyboard";
 
 function App() {
   return (
     <HashRouter>
+      <VirtualKeyboard />
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/my-farm" element={<MyFarm />} />
