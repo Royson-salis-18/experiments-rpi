@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Nutri-Tech Premium Landing Page</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#d0bb95",
+                        "emerald-deep": "#064e3b",
+                        "forest": "#1d1a15",
+                        "background-light": "#f7f7f6",
+                        "background-dark": "#1d1a15",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "1rem",
+                        "lg": "2rem",
+                        "xl": "3rem",
+                        "2xl": "4rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>.glass-card {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1)
+    }
+.grain-texture {
+    background-image: url(https://lh3.googleusercontent.com/aida-public/AB6AXuDmuclF82EmoZRJn2aBb3xkAbvtC8YecaTHZ0UzvUBAgr-dLWM9MNyUTuXmnb_3A83ey82Wnzx-Nu8qQTkrBE0FxOlsFLoGx_q-O0kmNgWWmp26MrBhUtpFRdpkLq4qHpNE71_9vznGWGxUWGmwwqPv_ajVmlY8R4NT-y010X-Yy0b_fB72XlCkE0JVJpVMvcjqKv53m0B3Zaw-t_hDXfWbzgftcx1oSH8hZGRe_wNj5fn_CujtlrcGl_Fzl3ca2W9nNX_oT5vhUGA);
+    opacity: 0.03;
+    pointer-events: none
+    }
+.blob {
+    position: absolute;
+    filter: blur(80px);
+    z-index: -1;
+    border-radius: 100%
+    }</style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-white selection:bg-primary/30 overflow-x-hidden">
+<div class="fixed inset-0 grain-texture z-50"></div>
+<!-- Navigation -->
+<nav class="relative z-20 px-6 py-6 md:px-12 lg:px-24">
+<div class="max-w-7xl mx-auto flex items-center justify-between glass-card px-8 py-4 rounded-full">
+<div class="flex items-center gap-3">
+<div class="size-8 bg-primary rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined text-background-dark text-xl">agriculture</span>
+</div>
+<h2 class="text-xl font-bold tracking-tight">Nutri-Tech</h2>
+</div>
+<div class="hidden md:flex items-center gap-10">
+<a class="text-sm font-medium hover:text-primary transition-colors" href="#">Product</a>
+<a class="text-sm font-medium hover:text-primary transition-colors" href="#">Solutions</a>
+<a class="text-sm font-medium hover:text-primary transition-colors" href="#">Intelligence</a>
+<a class="text-sm font-medium hover:text-primary transition-colors" href="#">Pricing</a>
+</div>
+<div class="flex items-center gap-4">
+<button class="hidden sm:block text-sm font-bold">Login</button>
+<button class="bg-primary text-background-dark px-6 py-2.5 rounded-full text-sm font-bold hover:brightness-110 transition-all">
+                    Get Started
+                </button>
+</div>
+</div>
+</nav>
+<!-- Hero Section -->
+<section class="relative pt-12 pb-24 px-6 md:px-12 lg:px-24 overflow-hidden">
+<!-- Background Blobs -->
+<div class="blob w-[500px] h-[500px] bg-primary/20 top-[-10%] right-[-10%]"></div>
+<div class="blob w-[600px] h-[600px] bg-emerald-deep/30 bottom-[-20%] left-[-10%]"></div>
+<div class="max-w-7xl mx-auto grid lg:grid-cols-2 gap-16 items-center">
+<div class="relative z-10">
+<div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 mb-8">
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+</span>
+<span class="text-xs font-semibold tracking-widest uppercase opacity-80">Next-Gen AgTech 2.0</span>
+</div>
+<h1 class="text-6xl md:text-7xl font-bold leading-[1.1] mb-8">
+                    The Future of <span class="text-primary italic">Field</span> Intelligence
+                </h1>
+<p class="text-lg md:text-xl text-white/60 mb-10 max-w-xl leading-relaxed">
+                    Precision farming SaaS powered by AI for modern agricultural excellence. Harness real-time data to optimize every single acre of your legacy.
+                </p>
+<div class="flex flex-wrap gap-4">
+<button class="bg-primary text-background-dark px-10 py-4 rounded-full text-lg font-bold hover:scale-105 transition-all shadow-xl shadow-primary/20">
+                        Start Free Trial
+                    </button>
+<button class="glass-card text-white px-10 py-4 rounded-full text-lg font-bold hover:bg-white/10 transition-all flex items-center gap-2">
+<span class="material-symbols-outlined">play_circle</span>
+                        Watch Demo
+                    </button>
+</div>
+</div>
+<div class="relative">
+<div class="w-full aspect-square rounded-2xl overflow-hidden shadow-2xl border-8 border-white/5 relative group">
+<img alt="Tech-enabled wheat field" class="w-full h-full object-cover grayscale-[0.2] group-hover:scale-110 transition-transform duration-700" data-alt="glowing tech-enabled wheat field at sunset" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDyVU0ETROxW2lbe9PdxjJkYiZ036FAfiK9Vf4jz1p9-ljqebe1az-TrMGUs1hcmkx_MxG0pztGC7nWQlkYUnMB25iC2uxiHiRowui472RKyoGz148qgIzFMx0Nv80TOTb7Qd6fkTHqHATcHEBZU_byi-VzHvzwFkkY-O6byBZiOepnn6EJrcmTjOAsRur3zb6m7wWITAhAIJryPhqDgff9zW2k913cGzNI0AEioIjdzm01LgSdbc6qlkmP3JKDygvHQTk9uy-rQIs"/>
+<div class="absolute inset-0 bg-gradient-to-tr from-emerald-900/40 to-transparent"></div>
+<!-- Floating Tech Cards -->
+<div class="absolute bottom-6 left-6 right-6 glass-card p-6 rounded-xl flex items-center justify-between">
+<div class="flex gap-4 items-center">
+<div class="size-12 rounded-full bg-emerald-500/20 flex items-center justify-center">
+<span class="material-symbols-outlined text-emerald-400">monitoring</span>
+</div>
+<div>
+<p class="text-xs text-white/40 uppercase font-bold tracking-wider">Current Yield Index</p>
+<p class="text-xl font-bold">98.4% Efficiency</p>
+</div>
+</div>
+<div class="text-emerald-400 font-bold">+12.5%</div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- Transition Shape -->
+<div class="relative w-full h-24 overflow-hidden -mt-1">
+<svg class="absolute bottom-0 w-full h-24 text-[#161411]" fill="currentColor" preserveaspectratio="none" viewbox="0 0 1440 100">
+<path d="M0,100 C480,0 960,0 1440,100 Z"></path>
+</svg>
+</div>
+<!-- Product Showcase -->
+<section class="bg-[#161411] py-24 px-6 md:px-12 lg:px-24">
+<div class="max-w-7xl mx-auto">
+<div class="text-center mb-20">
+<h2 class="text-4xl md:text-5xl font-bold mb-6">Precision Tools for Modern Growers</h2>
+<p class="text-white/40 max-w-2xl mx-auto text-lg">Our precision tools provide the deep insights needed to maximize yield and total sustainability through high-fidelity data.</p>
+</div>
+<div class="grid md:grid-cols-3 gap-8">
+<!-- AI Predictions -->
+<div class="glass-card p-10 rounded-2xl hover:bg-white/5 transition-all group border-b-4 border-b-transparent hover:border-b-primary">
+<div class="size-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-primary text-3xl">psychology</span>
+</div>
+<h3 class="text-2xl font-bold mb-4">AI-Predictions</h3>
+<p class="text-white/40 leading-relaxed">
+                        Predictive modeling for crop performance based on hyper-local weather data and historical soil performance.
+                    </p>
+</div>
+<!-- Nutrient Tracking -->
+<div class="glass-card p-10 rounded-2xl hover:bg-white/5 transition-all group border-b-4 border-b-transparent hover:border-b-emerald-400">
+<div class="size-14 rounded-2xl bg-emerald-400/10 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-emerald-400 text-3xl">biotech</span>
+</div>
+<h3 class="text-2xl font-bold mb-4">Nutrient Tracking</h3>
+<p class="text-white/40 leading-relaxed">
+                        Monitor vital minerals and nutrients in real-time with multi-spectral satellite integration and field sensors.
+                    </p>
+</div>
+<!-- Soil Health -->
+<div class="glass-card p-10 rounded-2xl hover:bg-white/5 transition-all group border-b-4 border-b-transparent hover:border-b-white">
+<div class="size-14 rounded-2xl bg-white/10 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform">
+<span class="material-symbols-outlined text-white text-3xl">landslide</span>
+</div>
+<h3 class="text-2xl font-bold mb-4">Soil Health</h3>
+<p class="text-white/40 leading-relaxed">
+                        Deep insights into soil microbiome and precise moisture levels across every topographical variance.
+                    </p>
+</div>
+</div>
+</div>
+</section>
+<!-- Stats Section -->
+<section class="py-24 px-6 md:px-12 lg:px-24 relative overflow-hidden">
+<div class="blob w-[400px] h-[400px] bg-primary/10 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
+<div class="max-w-7xl mx-auto">
+<div class="glass-card rounded-2xl p-12 md:p-20 grid md:grid-cols-3 gap-12 text-center">
+<div class="space-y-4">
+<p class="text-white/40 uppercase tracking-widest font-bold text-sm">Acres Managed</p>
+<p class="text-6xl font-bold">2.5M<span class="text-primary">+</span></p>
+<div class="flex items-center justify-center gap-1 text-emerald-400">
+<span class="material-symbols-outlined text-sm">trending_up</span>
+<span class="font-bold">+15% this year</span>
+</div>
+</div>
+<div class="space-y-4 border-x border-white/10">
+<p class="text-white/40 uppercase tracking-widest font-bold text-sm">Yield Increase</p>
+<p class="text-6xl font-bold">24%</p>
+<div class="flex items-center justify-center gap-1 text-emerald-400">
+<span class="material-symbols-outlined text-sm">trending_up</span>
+<span class="font-bold">+8% avg per user</span>
+</div>
+</div>
+<div class="space-y-4">
+<p class="text-white/40 uppercase tracking-widest font-bold text-sm">Efficiency Gain</p>
+<p class="text-6xl font-bold">40%</p>
+<div class="flex items-center justify-center gap-1 text-emerald-400">
+<span class="material-symbols-outlined text-sm">trending_up</span>
+<span class="font-bold">Water waste reduced</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+<!-- CTA Section -->
+<section class="pb-24 px-6 md:px-12 lg:px-24">
+<div class="max-w-7xl mx-auto rounded-2xl bg-gradient-to-br from-emerald-900 to-forest p-12 md:p-24 relative overflow-hidden text-center">
+<div class="relative z-10">
+<h2 class="text-4xl md:text-6xl font-bold mb-8">Ready to evolve your <br/><span class="text-primary">farming operations?</span></h2>
+<p class="text-white/60 text-lg mb-12 max-w-2xl mx-auto">Join thousands of modern agriculturists who are already using Nutri-Tech to secure the future of their land.</p>
+<div class="flex flex-col sm:flex-row gap-6 justify-center">
+<button class="bg-primary text-background-dark px-12 py-5 rounded-full text-xl font-bold hover:scale-105 transition-all">
+                        Schedule an Analysis
+                    </button>
+<button class="glass-card text-white px-12 py-5 rounded-full text-xl font-bold hover:bg-white/10 transition-all">
+                        View Pricing
+                    </button>
+</div>
+</div>
+<div class="absolute inset-0 opacity-20">
+<div class="absolute top-0 left-0 w-64 h-64 bg-primary rounded-full blur-[100px]"></div>
+<div class="absolute bottom-0 right-0 w-96 h-96 bg-emerald-400 rounded-full blur-[120px]"></div>
+</div>
+</div>
+</section>
+<!-- Footer -->
+<footer class="py-12 px-6 md:px-12 lg:px-24 border-t border-white/10">
+<div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8">
+<div class="flex items-center gap-3">
+<div class="size-6 bg-primary/20 rounded-full flex items-center justify-center">
+<span class="material-symbols-outlined text-primary text-sm">agriculture</span>
+</div>
+<h2 class="text-lg font-bold tracking-tight">Nutri-Tech</h2>
+</div>
+<div class="flex gap-8 text-sm text-white/40">
+<a class="hover:text-white transition-colors" href="#">Privacy Policy</a>
+<a class="hover:text-white transition-colors" href="#">Terms of Service</a>
+<a class="hover:text-white transition-colors" href="#">Cookie Policy</a>
+</div>
+<p class="text-sm text-white/40">© 2024 Nutri-Tech Agricultural Systems. All rights reserved.</p>
+</div>
+</footer>
+</body></html>

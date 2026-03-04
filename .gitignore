@@ -1,0 +1,28 @@
+node_modules/
+dist/
+dist-ssr/
+.DS_Store
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+backend/venv/
+
+# Env files
+.env
+.env.*
+**/.env
+
+# IDE
+.vscode/
+.idea/
+
+# Build artifacts
+coverage/
+build/
+out/
