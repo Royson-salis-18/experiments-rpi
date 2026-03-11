@@ -1,0 +1,176 @@
+ :root {
+     --accent-emerald: #10b981;
+     --accent-green: #059669;
+     --glass-bg: rgba(255, 255, 255, 0.02);
+     --glass-border: rgba(255, 255, 255, 0.08);
+ }
+
+ * {
+     margin: 0;
+     padding: 0;
+     box-sizing: border-box;
+ }
+
+ html, body {
+     height: 100%;
+     width: 100%;
+ }
+
+ body {
+     background: linear-gradient(135deg, #0f172a 0%, #0c1120 50%, #1a1f35 100%);
+     color: #f8fafc;
+     font-family: "Inter", "Plus Jakarta Sans", system-ui, sans-serif;
+     line-height: 1.5;
+     overflow-x: hidden;
+ }
+
+ /* When virtual keyboard is open, add bottom padding to the inner scroll container */
+ body.keyboard-open main {
+     padding-bottom: 360px;
+     transition: padding-bottom 0.25s ease;
+ }
+
+ main {
+     transition: padding-bottom 0.25s ease;
+ }
+
+ /* Keyboard slide-in animation */
+ @keyframes keyboard-slide-up {
+     from { transform: translateY(100%); }
+     to   { transform: translateY(0); }
+ }
+ .keyboard-panel {
+     animation: keyboard-slide-up 0.2s ease forwards;
+ }
+
+
+ #root {
+     width: 100%;
+     height: 100%;
+ }
+
+ /* Scrollbar Styles */
+ ::-webkit-scrollbar {
+     width: 8px;
+     height: 8px;
+ }
+
+ ::-webkit-scrollbar-track {
+     background: rgba(255, 255, 255, 0.02);
+ }
+
+ ::-webkit-scrollbar-thumb {
+     background: rgba(16, 185, 129, 0.3);
+     border-radius: 4px;
+ }
+
+ ::-webkit-scrollbar-thumb:hover {
+     background: rgba(16, 185, 129, 0.5);
+ }
+
+ /* Global Form Styles */
+ input, textarea, select {
+     background: rgba(255, 255, 255, 0.05);
+     border: 1px solid rgba(255, 255, 255, 0.1);
+     color: #f8fafc;
+     padding: 0.75rem;
+     border-radius: 0.75rem;
+     transition: all 0.2s ease;
+     font-family: inherit;
+ }
+
+ input::placeholder, textarea::placeholder {
+     color: rgba(226, 232, 240, 0.4);
+ }
+
+ input:focus, textarea:focus, select:focus {
+     outline: none;
+     border-color: rgba(16, 185, 129, 0.5);
+     background: rgba(16, 185, 129, 0.05);
+     box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+ }
+
+ /* Button Base Styles */
+ button {
+     font-family: inherit;
+     cursor: pointer;
+     transition: all 0.2s ease;
+ }
+
+ button:disabled {
+     opacity: 0.5;
+     cursor: not-allowed;
+ }
+
+ /* Utility Classes */
+ .no-scrollbar {
+     -ms-overflow-style: none;
+     scrollbar-width: none;
+ }
+
+ .no-scrollbar::-webkit-scrollbar {
+     display: none;
+ }
+
+ /* Animations */
+ @keyframes fade-in {
+     from {
+         opacity: 0;
+     }
+     to {
+         opacity: 1;
+     }
+ }
+
+ @keyframes slide-in-from-bottom {
+     from {
+         opacity: 0;
+         transform: translateY(8px);
+     }
+     to {
+         opacity: 1;
+         transform: translateY(0);
+     }
+ }
+
+ @keyframes zoom-in {
+     from {
+         opacity: 0;
+         transform: scale(0.95);
+     }
+     to {
+         opacity: 1;
+         transform: scale(1);
+     }
+ }
+
+ .animate-in {
+     animation: fade-in 0.3s ease forwards;
+ }
+
+ .fade-in {
+     animation: fade-in 0.3s ease;
+ }
+
+ .slide-in-from-bottom {
+     animation: slide-in-from-bottom 0.3s ease;
+ }
+
+ .zoom-in {
+     animation: zoom-in 0.3s ease;
+ }
+
+ /* Smooth Transitions */
+ .transition-all {
+     transition: all 0.2s ease;
+ }
+
+ .transition-colors {
+     transition: color 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
+ }
+
+ /* Text Selection */
+ ::selection {
+     background-color: rgba(16, 185, 129, 0.3);
+     color: #f8fafc;
+ }

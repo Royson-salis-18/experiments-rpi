@@ -15,12 +15,12 @@ jwt = JWTManager(app)
 
 # Initialize Supabase client
 # Read from environment to avoid committing secrets
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip()
 # Prefer service role key for server-side operations; fall back to anon if provided
 SUPABASE_KEY = (
-    os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-    or os.environ.get("SUPABASE_ANON_KEY")
-    or os.environ.get("SUPABASE_KEY")
+    os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+    or os.environ.get("SUPABASE_ANON_KEY", "").strip()
+    or os.environ.get("SUPABASE_KEY", "").strip()
 )
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Missing SUPABASE_URL or SUPABASE_*_KEY environment variables")
