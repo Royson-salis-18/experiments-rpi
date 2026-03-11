@@ -1,10 +1,4 @@
-import { supabase } from "../../supabaseClient";
-
 export default function Header() {
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
-
   const handleReload = () => {
     window.location.reload();
   };
@@ -31,15 +25,6 @@ export default function Header() {
           <span className="material-symbols-outlined text-lg">dashboard</span>
           Dashboard
         </a>
-        <div className="w-px h-6 bg-white/10 mx-1"></div>
-        <button
-          onClick={handleLogout}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:text-red-300 hover:bg-red-500/20 transition-all text-sm font-medium"
-          title="Sign Out"
-        >
-          <span className="material-symbols-outlined text-lg">logout</span>
-          Sign Out
-        </button>
       </div>
     </header>
   );
