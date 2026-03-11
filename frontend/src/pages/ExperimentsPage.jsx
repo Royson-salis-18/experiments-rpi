@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import Sidebar from "../components/layout/Sidebar";
 import Header from "../components/layout/Header";
-import VirtualKeyboard from "../components/VirtualKeyboard";
 import { supabase } from "../supabaseClient";
 
 const API_URL = "http://localhost:5000/api";
@@ -587,7 +586,6 @@ export default function ExperimentsPage() {
             </div>
           </div>
         </main>
-        <VirtualKeyboard />
       </div>
     </div>
   );
