@@ -3,7 +3,7 @@ import Sidebar from "../components/layout/Sidebar";
 import Header from "../components/layout/Header";
 import { supabase } from "../supabaseClient";
 
-const API_URL = "http://localhost:5000/api";
+const API_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:5000/api`;
 
 // ─── Sensor Data Card ──────────────────────────────────────────────────────────
 function SensorCard({ label, value, unit, icon }) {
