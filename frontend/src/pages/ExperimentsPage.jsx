@@ -397,6 +397,10 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
     setErrorMsg("");
     if (processing) { setErrorMsg("Another bucket is already collecting. Please wait."); return; }
     if (bucket.status === "Data Collected") return;
+    if (!supabase) {
+      setErrorMsg("Supabase client is not initialized. Check your environment variables.");
+      return;
+    }
     setProcessing(true); setActiveBucketId(bucket.id);
     const startTime = new Date().toISOString();
     const { error: patchError } = await supabase
@@ -639,6 +643,11 @@ const HistoryTab = () => {
   useEffect(() => {
     (async () => {
       setLoading(true);
+      if (!supabase) {
+        console.warn("Supabase not initialized");
+        setLoading(false);
+        return;
+      }
       const { data, error } = await supabase
         .from("sensor_data").select("*")
         .order("created_at", { ascending: false }).limit(30);

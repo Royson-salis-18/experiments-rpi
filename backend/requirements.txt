@@ -4,3 +4,4 @@ flask-jwt-extended
 gunicorn
 requests
 supabase
+python-dotenv
