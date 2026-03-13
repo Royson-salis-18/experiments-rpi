@@ -356,6 +356,7 @@ const ExperimentsListTab = () => {
 const ExperimentDetails = ({ experiment: initExp, onBack }) => {
   const [experiment, setExperiment] = useState(initExp);
   const [buckets, setBuckets] = useState(initExp.buckets || []);
+  const [loading, setLoading] = useState(false);
   const [activeBucketId, setActiveBucketId] = useState(null);
   const [processing, setProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -368,6 +369,29 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
   const [savingStatus, setSavingStatus] = useState(false);
   const [statusSaved, setStatusSaved] = useState(false);
   const pollTimers = useRef({});
+
+  // Fetch full details including sensor data on mount
+  useEffect(() => {
+    const fetchDetails = async () => {
+      setLoading(true);
+      try {
+        const res = await fetch(`${API_URL}/experiments/${initExp.id}`);
+        const data = await res.json();
+        if (data.success) {
+          setExperiment(data.experiment);
+          setBuckets(data.experiment.buckets || []);
+          // Sync draft status
+          setStatusDraft({
+            status: data.experiment.status || "planned",
+            started_at: data.experiment.started_at ? data.experiment.started_at.split("T")[0].split(" ")[0] : "",
+            ended_at: data.experiment.ended_at ? data.experiment.ended_at.split("T")[0].split(" ")[0] : "",
+          });
+        }
+      } catch (err) { console.error("Detail fetch error:", err); }
+      setLoading(false);
+    };
+    fetchDetails();
+  }, [initExp.id]);
 
   const isActive = experiment.status === "active";
 
@@ -567,6 +591,18 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
                     <span className="flex items-center gap-1.5"><span className="material-symbols-outlined text-sm">landscape</span>{b.soil_type}</span>
                     <span className="text-gray-600 text-xs">ID: {b.id}</span>
                   </div>
+
+                  {/* Quick-view for sensor data when NOT expanded */}
+                  {b.sensor_data && (
+                    <div className="mt-4 pt-4 border-t border-white/5">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <MiniReading label="Soil pH" value={b.sensor_data.ph} unit="" />
+                        <MiniReading label="Moisture" value={b.sensor_data.moisture} unit="%" />
+                        <MiniReading label="Nitrogen" value={b.sensor_data.nitrogen} unit="mg/kg" />
+                        <MiniReading label="EC" value={b.sensor_data.ec} unit="uS" />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -745,3 +781,12 @@ export default function ExperimentsPage() {
     </div>
   );
 }
+
+const MiniReading = ({ label, value, unit }) => (
+  <div className="bg-white/3 border border-white/10 rounded-lg p-2">
+    <div className="text-[10px] text-gray-500 uppercase">{label}</div>
+    <div className="text-xs font-semibold text-white">
+      {value !== null && value !== undefined ? `${value}${unit}` : "N/A"}
+    </div>
+  </div>
+);

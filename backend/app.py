@@ -144,18 +144,17 @@ def get_experiments():
             completed_tubs = 0
             formatted_buckets = []
             for idx, tub in enumerate(exp_tubs):
-                # The frontend expects status: "Data Collected" or "Waiting" based on our past mocks
-                # In real DB, we check if sensor_data exists for this tub. 
-                # For basic listing, we'll mark them waiting unless we know otherwise.
-                # A more robust query would join sensor_data here, but we will simplify 
-                # for the listing and handle real collection state in the frontend polling.
+                # Check if sensor data exists to set status
+                sensor_check = supabase.table('sensor_data').select("id").eq("tub_id", tub["id"]).limit(1).execute()
+                status = "Data Collected" if len(sensor_check.data) > 0 else "Waiting"
+                
                 formatted_buckets.append({
                     "id": tub["id"],
                     "experiment_id": exp["id"],
                     "bucket_number": tub.get("label", f"Bucket {idx+1}"),
                     "soil_type": tub.get("soil_type"),
                     "plant_type": tub.get("plant_name"),
-                    "status": "Waiting", # Will be updated dynamically by frontend or detail query
+                    "status": status,
                     "sensor_data": None
                 })
                 
@@ -228,18 +227,24 @@ def get_experiment(id):
             sensor_res = supabase.table('sensor_data').select("*").eq("tub_id", tub["id"]).order("created_at", desc=True).limit(1).execute()
             
             status = "Waiting"
-            sensor_data_json = None
+            sensor_data = None
             if len(sensor_res.data) > 0:
                 status = "Data Collected"
                 sd = sensor_res.data[0]
-                # Map to our frontend expected JSON mock format
-                import json
-                sensor_data_json = json.dumps({
+                # Send the raw data or a clean map
+                sensor_data = {
                     "ph": sd.get("soil_ph"),
                     "moisture": sd.get("soil_moisture"),
                     "temperature": sd.get("soil_temp"),
-                    "nitrogen": sd.get("nitrogen")
-                })
+                    "nitrogen": sd.get("nitrogen"),
+                    "phosphorus": sd.get("phosphorus"),
+                    "potassium": sd.get("potassium"),
+                    "ec": sd.get("soil_ec"),
+                    "waterPh": sd.get("water_ph"),
+                    "airTemp": sd.get("air_temp"),
+                    "airHumidity": sd.get("air_humidity"),
+                    "createdAt": sd.get("created_at")
+                }
                 
             formatted_buckets.append({
                 "id": tub["id"],
@@ -248,7 +253,7 @@ def get_experiment(id):
                 "soil_type": tub.get("soil_type"),
                 "plant_type": tub.get("plant_name"),
                 "status": status,
-                "sensor_data": sensor_data_json
+                "sensor_data": sensor_data
             })
             
         frontend_exp = {
