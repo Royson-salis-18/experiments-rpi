@@ -11,15 +11,34 @@ function isTextLike(el) {
   return ["text", "search", "email", "password", "url", "tel", "number"].includes(type)
 }
 
+// Get the native value setter to trigger React's synthetic onChange
+function getNativeSetter(el) {
+  const proto = el.tagName === "TEXTAREA"
+    ? window.HTMLTextAreaElement.prototype
+    : window.HTMLInputElement.prototype
+  return Object.getOwnPropertyDescriptor(proto, "value")?.set
+}
+
+function setReactValue(el, newVal) {
+  try {
+    const setter = getNativeSetter(el)
+    if (setter) setter.call(el, newVal)
+    else el.value = newVal
+  } catch {
+    el.value = newVal
+  }
+  el.dispatchEvent(new Event("input", { bubbles: true }))
+}
+
 function insertChar(el, char) {
   if (!el) return
   const start = el.selectionStart ?? el.value.length
   const end = el.selectionEnd ?? start
   const val = el.value || ""
-  el.value = val.slice(0, start) + char + val.slice(end)
+  const newVal = val.slice(0, start) + char + val.slice(end)
   const pos = start + char.length
+  setReactValue(el, newVal)
   el.setSelectionRange?.(pos, pos)
-  el.dispatchEvent(new Event("input", { bubbles: true }))
 }
 
 function doBackspace(el) {
@@ -27,14 +46,16 @@ function doBackspace(el) {
   const start = el.selectionStart ?? 0
   const end = el.selectionEnd ?? 0
   const val = el.value || ""
+  let newVal, pos
   if (start !== end) {
-    el.value = val.slice(0, start) + val.slice(end)
-    el.setSelectionRange?.(start, start)
+    newVal = val.slice(0, start) + val.slice(end)
+    pos = start
   } else if (start > 0) {
-    el.value = val.slice(0, start - 1) + val.slice(end)
-    el.setSelectionRange?.(start - 1, start - 1)
-  }
-  el.dispatchEvent(new Event("input", { bubbles: true }))
+    newVal = val.slice(0, start - 1) + val.slice(end)
+    pos = start - 1
+  } else { return }
+  setReactValue(el, newVal)
+  el.setSelectionRange?.(pos, pos)
 }
 
 // ─── Key layouts ─────────────────────────────────────────────────────────────

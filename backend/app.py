@@ -7,6 +7,16 @@ from supabase import create_client, Client
 import os
 from datetime import datetime
 
+# Auto-load .env file if present
+try:
+    from dotenv import load_dotenv
+    import pathlib
+    _env_path = pathlib.Path(__file__).resolve().parent / ".env"
+    load_dotenv(_env_path)
+except ImportError:
+    pass  # python-dotenv not installed, rely on system env vars
+
+
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
@@ -22,6 +32,8 @@ SUPABASE_KEY = (
     or os.environ.get("SUPABASE_ANON_KEY", "").strip()
     or os.environ.get("SUPABASE_KEY", "").strip()
 )
+print(f"[DEBUG] SUPABASE_URL = {SUPABASE_URL[:30]}...")
+print(f"[DEBUG] SUPABASE_KEY = {SUPABASE_KEY[:20]}...{SUPABASE_KEY[-10:]}")
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Missing SUPABASE_URL or SUPABASE_*_KEY environment variables")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -72,32 +84,39 @@ def create_experiment():
     """Create a new experiment in `experiment.experiments` table"""
     data = request.json
     try:
-        # Fetch the max ID horizontally to bypass sequence permission issues (42501)
+        # Fetch the max ID to bypass sequence permission issues (42501)
         max_id_res = exp_schema().table('experiments').select("id").order("id", desc=True).limit(1).execute()
         next_id = 1
         if len(max_id_res.data) > 0:
             next_id = max_id_res.data[0]["id"] + 1
 
-        # Schema definition shows title, description as optional, status defaults to something
-        res = exp_schema().table('experiments').insert({
+        insert_payload = {
             "id": next_id,
             "title": data.get("title", f"Experiment {data.get('experiment_number')}"),
             "description": data.get("description", ""),
-            "status": "planned" # using schema default mapping
-        }).execute()
+            "status": data.get("status", "planned"),
+        }
+        # Only set date fields if provided and non-empty
+        if data.get("started_at"):
+            insert_payload["started_at"] = data["started_at"]
+        if data.get("ended_at"):
+            insert_payload["ended_at"] = data["ended_at"]
+
+        res = exp_schema().table('experiments').insert(insert_payload).execute()
         
         if len(res.data) == 0:
             return jsonify({"success": False, "message": "Failed to create experiment"}), 400
             
         new_exp = res.data[0]
-        # map to our expected frontend format
         frontend_exp = {
             "id": new_exp["id"],
-            "experiment_number": f"EXP-{new_exp['id']}", 
+            "experiment_number": f"EXP-{new_exp['id']}",
             "title": new_exp.get("title"),
             "num_buckets": data.get("num_buckets"),
             "description": new_exp.get("description"),
-            "status": "Configured",
+            "status": new_exp.get("status", "planned"),
+            "started_at": new_exp.get("started_at"),
+            "ended_at": new_exp.get("ended_at"),
             "buckets": []
         }
         return jsonify({"success": True, "experiment": frontend_exp}), 201
@@ -147,11 +166,48 @@ def get_experiments():
                 "num_buckets": len(exp_tubs),
                 "description": exp.get("description"),
                 "status": exp.get("status", "planned"),
+                "started_at": exp.get("started_at"),
+                "ended_at": exp.get("ended_at"),
                 "buckets": formatted_buckets
             }
             formatted_exps.append(frontend_exp)
             
         return jsonify({"success": True, "experiments": formatted_exps}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+
+@app.route("/api/experiments/<int:exp_id>", methods=["PATCH"])
+def update_experiment(exp_id):
+    """Update experiment status, started_at, ended_at"""
+    data = request.json
+    try:
+        update_payload = {}
+        if "status" in data:
+            update_payload["status"] = data["status"]
+        # Allow null to clear dates
+        if "started_at" in data:
+            update_payload["started_at"] = data["started_at"]  # can be None
+        if "ended_at" in data:
+            update_payload["ended_at"] = data["ended_at"]      # can be None
+
+        if not update_payload:
+            return jsonify({"success": False, "message": "Nothing to update"}), 400
+
+        res = exp_schema().table('experiments').update(update_payload).eq("id", exp_id).execute()
+
+        if len(res.data) == 0:
+            return jsonify({"success": False, "message": "Experiment not found or no change"}), 404
+
+        updated = res.data[0]
+        return jsonify({
+            "success": True,
+            "experiment": {
+                "id": updated["id"],
+                "status": updated.get("status"),
+                "started_at": updated.get("started_at"),
+                "ended_at": updated.get("ended_at"),
+            }
+        }), 200
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
 
