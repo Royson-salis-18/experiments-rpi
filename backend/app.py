@@ -85,7 +85,7 @@ def create_experiment():
     data = request.json
     try:
         # Fetch the max ID to bypass sequence permission issues (42501)
-        max_id_res = exp_schema().table('experiments').select("id").order("id", desc=True).limit(1).execute()
+        max_id_res = exp_schema().table('experiments').select("id").order("id", descending=True).limit(1).execute()
         next_id = 1
         if len(max_id_res.data) > 0:
             next_id = max_id_res.data[0]["id"] + 1
@@ -175,6 +175,23 @@ def get_experiments():
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
 
+@app.route("/api/debug/system", methods=["GET"])
+def system_debug():
+    try:
+        exp_count = exp_schema().table('experiments').select("id", count="exact").execute()
+        tub_count = exp_schema().table('tubs').select("id", count="exact").execute()
+        data_count = supabase.table('sensor_data').select("id", count="exact").execute()
+        
+        return jsonify({
+            "success": True,
+            "supabase_url": SUPABASE_URL,
+            "experients_count": exp_count.count,
+            "tubs_count": tub_count.count,
+            "sensor_readings_total": data_count.count
+        }), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+
 @app.route("/api/experiments/<int:exp_id>", methods=["PATCH"])
 def update_experiment(exp_id):
     """Update experiment status, started_at, ended_at"""
@@ -223,8 +240,10 @@ def get_experiment(id):
         
         formatted_buckets = []
         for idx, tub in enumerate(tubs):
-            # Try to grab the latest sensor reading for this tub to determine "Data Collected" status
-            sensor_res = supabase.table('sensor_data').select("*").eq("tub_id", tub["id"]).order("created_at", desc=True).limit(1).execute()
+            # Try to grab the latest sensor reading for this tub
+            sensor_res = supabase.table('sensor_data').select("*").eq("tub_id", tub["id"]).order("created_at", descending=True).limit(1).execute()
+            
+            print(f"[DEBUG] Tub {tub['id']} ({tub.get('label')}) -> Sensor readings found: {len(sensor_res.data)}")
             
             status = "Waiting"
             sensor_data = None
@@ -277,7 +296,7 @@ def create_bucket(experiment_id):
     data = request.json
     try:
         # Fetch max ID for tubs
-        max_id_res = exp_schema().table('tubs').select("id").order("id", desc=True).limit(1).execute()
+        max_id_res = exp_schema().table('tubs').select("id").order("id", descending=True).limit(1).execute()
         next_id = 1
         if len(max_id_res.data) > 0:
             next_id = max_id_res.data[0]["id"] + 1
@@ -351,7 +370,7 @@ def get_latest_bucket_data(id):
         since = since.replace(" ", "+")
     try:
         # Fetch actual matching data
-        query = supabase.table('sensor_data').select("*").eq("tub_id", id).order("created_at", desc=True).limit(1)
+        query = supabase.table('sensor_data').select("*").eq("tub_id", id).order("created_at", descending=True).limit(1)
         if since:
             query = query.gte("created_at", since)
             
@@ -393,21 +412,27 @@ def get_latest_bucket_data(id):
     try:
         # We need a cutoff time ideally, but for now we'll just check if *any* data exists
         # In a real rigorous test, we'd check if `created_at` > `experiment.started_at`
-        sensor_res = supabase.table('sensor_data').select("*").eq("tub_id", id).order("created_at", desc=True).limit(1).execute()
+        sensor_res = supabase.table('sensor_data').select("*").eq("tub_id", id).order("created_at", descending=True).limit(1).execute()
         
         if len(sensor_res.data) > 0:
             sd = sensor_res.data[0]
-            import json
-            sensor_data_json = json.dumps({
+            sensor_data = {
                 "ph": sd.get("soil_ph", 0),
                 "moisture": sd.get("soil_moisture", 0),
                 "temperature": sd.get("soil_temp", 0),
-                "nitrogen": sd.get("nitrogen", 0)
-            })
+                "nitrogen": sd.get("nitrogen", 0),
+                "phosphorus": sd.get("phosphorus", 0),
+                "potassium": sd.get("potassium", 0),
+                "ec": sd.get("soil_ec", 0),
+                "waterPh": sd.get("water_ph", 0),
+                "airTemp": sd.get("air_temp", 0),
+                "airHumidity": sd.get("air_humidity", 0),
+                "createdAt": sd.get("created_at")
+            }
             return jsonify({
                 "success": True, 
                 "has_data": True, 
-                "sensor_data": sensor_data_json,
+                "sensor_data": sensor_data,
                 "raw": sd
             }), 200
         else:
