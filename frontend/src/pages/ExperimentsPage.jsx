@@ -675,24 +675,42 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
 const HistoryTab = () => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [errorDetails, setErrorDetails] = useState(null);
 
   useEffect(() => {
     (async () => {
-      setLoading(true);
+      setLoading(true); setErrorDetails(null);
       if (!supabase) {
-        console.warn("Supabase not initialized");
+        setErrorDetails("Supabase client not initialized. Ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in Render Environment Variables.");
         setLoading(false);
         return;
       }
       const { data, error } = await supabase
         .from("sensor_data").select("*")
         .order("created_at", { ascending: false }).limit(30);
-      if (!error) setHistory(data || []);
+      
+      if (error) {
+        setErrorDetails(error.message);
+      } else {
+        setHistory(data || []);
+      }
       setLoading(false);
     })();
   }, []);
 
   if (loading) return <div className="text-center py-16 text-gray-400">Loading history...</div>;
+  
+  if (errorDetails) return (
+    <div className="p-6 bg-red-500/10 border border-red-500/30 rounded-2xl text-red-400">
+      <div className="flex items-center gap-3 mb-2 font-bold">
+        <span className="material-symbols-outlined">warning</span> Query Error
+      </div>
+      <p className="text-sm">{errorDetails}</p>
+      <div className="mt-4 pt-4 border-t border-red-500/20 text-[10px] opacity-50">
+        URL: {import.meta.env.VITE_SUPABASE_URL || "NOT SET"}
+      </div>
+    </div>
+  );
   if (history.length === 0) return (
     <div className="text-center py-16">
       <span className="material-symbols-outlined text-5xl text-gray-600 mb-4 block">history</span>
