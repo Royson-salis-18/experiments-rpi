@@ -528,6 +528,8 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
         setBuckets(prev => prev.map(b =>
           b.id === bucket.id ? { ...b, status: "Data Collected", sensor_data: parseSensorData(sd) } : b
         ));
+        // Auto-expand the bucket to show the fresh data immediately
+        setExpandedBucket(bucket.id);
         setProcessing(false); setActiveBucketId(null);
         // Release lock
         await supabase.from("sensor_status").update({ is_locked: false }).eq("sensor_id", "esp32-001");
@@ -684,23 +686,36 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
                       <MiniReading label="Potassium" value={b.sensor_data?.potassium} unit="mg/kg" />
                       <MiniReading label="Soil Temp" value={b.sensor_data?.temperature} unit="°C" />
                       <MiniReading label="Soil EC" value={b.sensor_data?.ec} unit="dS/m" />
-                      <MiniReading label="Plant Health" value={b.sensor_data?.health} unit="" />
+                      <MiniReading label="Water pH" value={b.sensor_data?.waterPh} unit="" />
+                      <MiniReading label="Air Temp" value={b.sensor_data?.airTemp} unit="°C" />
+                      <MiniReading label="Air Humidity" value={b.sensor_data?.airHumidity} unit="%" />
                     </div>
                   </div>
 
-                  {/* Health Score Input */}
-                  <div className="flex items-center gap-4 pt-3 border-t border-white/5">
-                    <input type="number" min="0" max="1" step="0.1" placeholder="Score 0-1"
-                      value={healthInputs[b.id] ?? (b.sensor_data?.health || "")}
-                      onChange={(e) => setHealthInputs(p => ({ ...p, [b.id]: e.target.value }))}
-                      className="bg-slate-900 border border-white/10 rounded-lg px-3 py-1.5 text-sm w-32 focus:border-emerald-500 outline-none" />
-                    <button onClick={() => submitHealth(b.id, b.sensor_data?.id)} disabled={updatingHealth === b.id}
-                      className="text-emerald-400 text-xs font-bold hover:underline disabled:opacity-50">
-                      {updatingHealth === b.id ? "Saving..." : "Update Health Score"}
-                    </button>
+                  {/* Health Score Input (0.00 - 1.00) */}
+                  <div className="pt-3 border-t border-white/5 space-y-3">
+                    <label className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest block">
+                      Plant Health Score (0.00 – 1.00)
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <input type="number" min="0" max="1" step="0.01" placeholder="e.g. 0.75"
+                        value={healthInputs[b.id] ?? (b.sensor_data?.health !== null && b.sensor_data?.health !== undefined ? b.sensor_data.health : "")}
+                        onChange={(e) => setHealthInputs(p => ({ ...p, [b.id]: e.target.value }))}
+                        className="bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm w-36 focus:border-emerald-500 outline-none text-white" />
+                      <button onClick={() => submitHealth(b.id, b.sensor_data?.id)} disabled={updatingHealth === b.id}
+                        className="px-4 py-2 bg-emerald-500/20 text-emerald-400 text-xs font-bold rounded-lg border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-50 transition-all">
+                        {updatingHealth === b.id ? "Saving..." : "Save Health Score"}
+                      </button>
+                    </div>
+                    {(b.sensor_data?.health === null || b.sensor_data?.health === undefined) && (
+                      <p className="text-xs text-amber-400 flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-sm">warning</span>
+                        You must record a health score before you can sense again.
+                      </p>
+                    )}
                   </div>
 
-                  {/* Sense Again confirmation */}
+                  {/* Sense Again — only enabled if health score has been saved */}
                   <div className="flex items-center justify-between pt-3 border-t border-white/5">
                     <p className="text-xs text-gray-500">Want to take a fresh reading for this tub?</p>
                     <button 
@@ -708,8 +723,8 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
                         setExpandedBucket(null);
                         startSensorCollection(b);
                       }} 
-                      disabled={processing}
-                      className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold rounded-lg flex items-center gap-2 disabled:opacity-50 transition-all">
+                      disabled={processing || b.sensor_data?.health === null || b.sensor_data?.health === undefined}
+                      className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
                       <span className="material-symbols-outlined text-base">sensors</span> 
                       Sense Now
                     </button>
