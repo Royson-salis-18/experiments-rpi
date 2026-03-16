@@ -3,9 +3,38 @@ import Sidebar from "../components/layout/Sidebar";
 import Header from "../components/layout/Header";
 import { supabase } from "../supabaseClient";
 
-const API_URL = import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:5000/api`;
+/**
+ * NutriTech Experiments Management Page
+ * ------------------------------------
+ * This page handles the creation of experiments, assignment of physical tubs
+ * to experiment buckets, triggering of sensor readings, and viewing results.
+ */
 
-// ─── Status config ─────────────────────────────────────────────────────────────
+// API Configuration - attempts to read from env or defaults to localhost
+const rawUrl = import.meta.env.VITE_API_URL;
+const API_URL = (rawUrl && rawUrl.trim() !== "") 
+  ? rawUrl 
+  : `${window.location.protocol}//127.0.0.1:5000/api`;
+
+/**
+ * Pings the backend to check if it's reachable
+ */
+async function checkBackendHealth() {
+  try {
+    const res = await fetch(`${API_URL}/health-check`, { 
+      method: 'GET',
+      headers: { 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(5000) 
+    });
+    const data = await res.json();
+    return data.success;
+  } catch (err) {
+    console.error("[DEBUG] Health check failed:", err.message);
+    return false;
+  }
+}
+
+// Visual configuration for different experiment statuses
 const STATUS_CFG = {
   planned:   { label: "Planned",   color: "bg-gray-500/20 text-gray-300 border-gray-500/30",     icon: "schedule" },
   active:    { label: "Active",    color: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30", icon: "play_circle" },
@@ -13,6 +42,9 @@ const STATUS_CFG = {
   completed: { label: "Completed", color: "bg-blue-500/20 text-blue-400 border-blue-500/30",      icon: "check_circle" },
 };
 
+/**
+ * Renders a stylized badge based on experiment status
+ */
 function StatusBadge({ status }) {
   const cfg = STATUS_CFG[status] || STATUS_CFG.planned;
   return (
@@ -23,7 +55,9 @@ function StatusBadge({ status }) {
   );
 }
 
-// ─── Sensor Data Card ───────────────────────────────────────────────────────────
+/**
+ * Single metric display card for sensor readings
+ */
 function SensorCard({ label, value, unit, icon }) {
   return (
     <div className="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col gap-1">
@@ -39,25 +73,34 @@ function SensorCard({ label, value, unit, icon }) {
   );
 }
 
+/**
+ * Maps raw backend/database keys to frontend display keys
+ */
 function parseSensorData(sd) {
   return {
     ph: sd.soil_ph, moisture: sd.soil_moisture, temperature: sd.soil_temp,
     nitrogen: sd.nitrogen, phosphorus: sd.phosphorus, potassium: sd.potassium,
     ec: sd.soil_ec, waterPh: sd.water_ph, airTemp: sd.air_temp,
     airHumidity: sd.air_humidity, createdAt: sd.created_at,
+    id: sd.id, health: sd.health,
   };
 }
 
+/**
+ * Formats a date string for display
+ */
 function fmtDate(d) {
   if (!d) return null;
   try { return new Date(d).toLocaleDateString(); } catch { return d; }
 }
 
-// ─── Shared input style ────────────────────────────────────────────────────────
+// Tailwind design tokens for reuse
 const inputCls = "w-full bg-white/5 border border-white/10 rounded-xl p-4 text-white placeholder-gray-500 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 outline-none transition-all";
 const selectCls = "w-full bg-slate-800 border border-white/10 rounded-xl p-4 text-white focus:border-emerald-500 outline-none transition-all";
 
-// ─── New Experiment Tab ─────────────────────────────────────────────────────────
+// --------------------------------------------------------------------------------
+// TAB 1: NEW EXPERIMENT WIZARD
+// --------------------------------------------------------------------------------
 const NewExperimentTab = ({ onSuccess }) => {
   const [step, setStep] = useState(1);
   const [experiment, setExperiment] = useState(null);
@@ -66,13 +109,46 @@ const NewExperimentTab = ({ onSuccess }) => {
     experiment_number: "", title: "", num_buckets: 1, description: "",
     status: "planned", started_at: "", ended_at: "",
   });
-  const [bucketData, setBucketData] = useState({ soil_type: "", plant_type: "" });
+  const [bucketData, setBucketData] = useState({ tub_id: "", soil_type: "", plant_type: "" });
+  const [availableTubs, setAvailableTubs] = useState([]);
+  const [selectedTubsInSteps, setSelectedTubsInSteps] = useState([]); 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const setExp = (k, v) => setExpData(p => ({ ...p, [k]: v }));
   const setBkt = (k, v) => setBucketData(p => ({ ...p, [k]: v }));
 
+  // Load available physical tubs when reaching Step 2
+  useEffect(() => {
+    if (step === 2) {
+      const fetchTubs = async () => {
+        try {
+          const [tubsRes, expsRes] = await Promise.all([
+            fetch(`${API_URL}/tubs`),
+            fetch(`${API_URL}/experiments`)
+          ]);
+          const tubsData = await tubsRes.json();
+          const expsData = await expsRes.json();
+          
+          if (tubsData.success) {
+            const enrichedTubs = tubsData.tubs.map(t => {
+              if (t.is_busy && expsData.success) {
+                const exp = expsData.experiments.find(e => e.id === t.current_exp_id);
+                return { ...t, exp_title: exp?.title || "Unknown Experiment" };
+              }
+              return t;
+            });
+            setAvailableTubs(enrichedTubs);
+          }
+        } catch (err) { console.error("Tubs fetch error:", err); }
+      };
+      fetchTubs();
+    }
+  }, [step]);
+
+  /**
+   * Submits initial experiment metadata to create the experiment record
+   */
   const handleExpSubmit = async (e) => {
     e.preventDefault();
     setLoading(true); setError("");
@@ -95,6 +171,9 @@ const NewExperimentTab = ({ onSuccess }) => {
     setLoading(false);
   };
 
+  /**
+   * Submits bucket configuration (associates a physical tub with the current experiment)
+   */
   const handleBucketSubmit = async (e) => {
     e.preventDefault();
     setLoading(true); setError("");
@@ -103,13 +182,15 @@ const NewExperimentTab = ({ onSuccess }) => {
       const res = await fetch(`${API_URL}/experiments/${experiment.id}/buckets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bucket_number: `Bucket ${currentBucketIndex}`, ...bucketData }),
+        body: JSON.stringify(bucketData),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.message);
+      
+      setSelectedTubsInSteps(prev => [...prev, bucketData.tub_id]);
       if (currentBucketIndex < totalBuckets) {
         setCurrentBucketIndex(p => p + 1);
-        setBucketData({ soil_type: "", plant_type: "" });
+        setBucketData({ tub_id: "", soil_type: "", plant_type: "" });
       } else {
         setStep(3);
       }
@@ -143,7 +224,7 @@ const NewExperimentTab = ({ onSuccess }) => {
         </div>
       )}
 
-      {/* ── Step 1: Experiment details ── */}
+      {/* -- Step 1: Experiment General Info -- */}
       {step === 1 && (
         <form onSubmit={handleExpSubmit} className="space-y-5">
           <div className="mb-6">
@@ -195,20 +276,6 @@ const NewExperimentTab = ({ onSuccess }) => {
             </select>
           </div>
 
-          {expData.status === "active" && (
-            <p className="text-sm text-emerald-400 mt-2 flex items-center gap-1">
-              <span className="material-symbols-outlined text-sm">info</span>
-              Start date will automatically be set to today.
-            </p>
-          )}
-
-          {expData.status === "completed" && (
-            <p className="text-sm text-blue-400 mt-2 flex items-center gap-1">
-              <span className="material-symbols-outlined text-sm">info</span>
-              Start and completion dates will automatically be set to today.
-            </p>
-          )}
-
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">Description (Optional)</label>
             <textarea value={expData.description} onChange={e => setExp("description", e.target.value)}
@@ -221,7 +288,7 @@ const NewExperimentTab = ({ onSuccess }) => {
         </form>
       )}
 
-      {/* ── Step 2: Bucket details ── */}
+      {/* -- Step 2: Individual Bucket (Tub) Setup -- */}
       {step === 2 && (
         <form onSubmit={handleBucketSubmit} className="space-y-5">
           <div className="mb-6">
@@ -245,8 +312,24 @@ const NewExperimentTab = ({ onSuccess }) => {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Bucket Label</label>
-            <div className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-gray-400">Bucket {currentBucketIndex}</div>
+            <label className="block text-sm font-medium text-gray-300 mb-2">Select Physical Tub</label>
+            <select 
+              required
+              value={bucketData.tub_id}
+              onChange={e => setBkt("tub_id", e.target.value)}
+              className={selectCls}
+            >
+              <option value="">-- Choose a Tub --</option>
+              {availableTubs.map(tub => {
+                const isUsedInForm = selectedTubsInSteps.includes(tub.id);
+                const isDisabled = tub.is_busy || isUsedInForm;
+                return (
+                  <option key={tub.id} value={tub.id} disabled={isDisabled}>
+                    {tub.label} {tub.is_busy ? `(Active: ${tub.exp_title || tub.current_exp_id})` : isUsedInForm ? "(Already selected)" : "(Available)"}
+                  </option>
+                );
+              })}
+            </select>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">Soil Type</label>
@@ -270,13 +353,18 @@ const NewExperimentTab = ({ onSuccess }) => {
   );
 };
 
-// ─── Experiments List Tab ───────────────────────────────────────────────────────
+// --------------------------------------------------------------------------------
+// TAB 2: ACTIVE EXPERIMENTS LIST
+// --------------------------------------------------------------------------------
 const ExperimentsListTab = () => {
   const [experiments, setExperiments] = useState([]);
   const [selectedExp, setSelectedExp] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  /**
+   * Fetches all experiments from the backend API
+   */
   const fetchExperiments = async () => {
     setLoading(true); setError("");
     try {
@@ -284,9 +372,9 @@ const ExperimentsListTab = () => {
       if (!res.ok) throw new Error(`Backend returned ${res.status}`);
       const data = await res.json();
       if (data.success) setExperiments(data.experiments);
-      else throw new Error(data.message || "Unknown error");
+      else throw new Error(data.message);
     } catch (err) {
-      setError(`Could not load experiments: ${err.message}. Make sure the backend is running.`);
+      setError(`Could not load experiments. Backend might be offline.`);
     }
     setLoading(false);
   };
@@ -303,56 +391,42 @@ const ExperimentsListTab = () => {
     <div className="text-center py-16 space-y-4">
       <span className="material-symbols-outlined text-5xl text-red-500/50 block">cloud_off</span>
       <p className="text-red-400 text-sm max-w-md mx-auto">{error}</p>
-      <button onClick={fetchExperiments}
-        className="px-5 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-gray-300 text-sm transition-colors">
-        Retry
-      </button>
-    </div>
-  );
-
-  if (experiments.length === 0) return (
-    <div className="text-center py-16">
-      <span className="material-symbols-outlined text-5xl text-gray-600 mb-4 block">science</span>
-      <p className="text-gray-400">No experiments yet. Create one to get started!</p>
+      <button onClick={fetchExperiments} className="px-5 py-2 bg-white/5 border border-white/10 rounded-lg text-gray-300 text-sm hover:bg-white/10 transition-colors">Retry</button>
     </div>
   );
 
   return (
     <div className="space-y-4">
-      {experiments.map((exp) => (
-        <div key={exp.id} onClick={() => setSelectedExp(exp)}
-          className="p-6 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 hover:border-emerald-500/50 cursor-pointer transition-all">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <h3 className="text-lg font-semibold text-white mb-1">{exp.experiment_number}: {exp.title}</h3>
-              <p className="text-sm text-gray-400">{exp.description || "No description"}</p>
-              <div className="flex flex-wrap gap-4 mt-3 text-xs text-gray-500">
-                <span className="flex items-center gap-1">
-                  <span className="material-symbols-outlined text-sm">storage</span>{exp.num_buckets} Buckets
-                </span>
-                {exp.started_at && (
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined text-sm">calendar_today</span>
-                    Started: {fmtDate(exp.started_at)}
-                  </span>
-                )}
-                {exp.ended_at && (
-                  <span className="flex items-center gap-1">
-                    <span className="material-symbols-outlined text-sm">event_available</span>
-                    Ended: {fmtDate(exp.ended_at)}
-                  </span>
-                )}
-              </div>
-            </div>
-            <StatusBadge status={exp.status} />
-          </div>
+      {experiments.length === 0 ? (
+        <div className="text-center py-16">
+          <span className="material-symbols-outlined text-5xl text-gray-600 mb-4 block">science</span>
+          <p className="text-gray-400">No experiments found.</p>
         </div>
-      ))}
+      ) : (
+        experiments.map((exp) => (
+          <div key={exp.id} onClick={() => setSelectedExp(exp)}
+            className="p-6 bg-white/5 border border-white/10 rounded-xl hover:bg-white/10 hover:border-emerald-500/50 cursor-pointer transition-all">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <h3 className="text-lg font-semibold text-white mb-1">{exp.experiment_number}: {exp.title}</h3>
+                <p className="text-sm text-gray-400">{exp.description || "No description"}</p>
+                <div className="flex flex-wrap gap-4 mt-3 text-xs text-gray-500">
+                  <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">storage</span>{exp.num_buckets} Buckets</span>
+                  {exp.started_at && <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm">calendar_today</span>Started: {fmtDate(exp.started_at)}</span>}
+                </div>
+              </div>
+              <StatusBadge status={exp.status} />
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 };
 
-// ─── Experiment Details ─────────────────────────────────────────────────────────
+// --------------------------------------------------------------------------------
+// EXPERIMENT DETAILS & CONTROL VIEW
+// --------------------------------------------------------------------------------
 const ExperimentDetails = ({ experiment: initExp, onBack }) => {
   const [experiment, setExperiment] = useState(initExp);
   const [buckets, setBuckets] = useState(initExp.buckets || []);
@@ -363,14 +437,15 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
   const [expandedBucket, setExpandedBucket] = useState(null);
   const [statusDraft, setStatusDraft] = useState({
     status: initExp.status || "planned",
-    started_at: initExp.started_at ? initExp.started_at.split("T")[0].split(" ")[0] : "",
-    ended_at: initExp.ended_at ? initExp.ended_at.split("T")[0].split(" ")[0] : "",
+    started_at: initExp.started_at ? initExp.started_at.split("T")[0] : "",
+    ended_at: initExp.ended_at ? initExp.ended_at.split("T")[0] : "",
   });
   const [savingStatus, setSavingStatus] = useState(false);
-  const [statusSaved, setStatusSaved] = useState(false);
+  const [healthInputs, setHealthInputs] = useState({});
+  const [updatingHealth, setUpdatingHealth] = useState(null);
   const pollTimers = useRef({});
 
-  // Fetch full details including sensor data on mount
+  // Sync state with full backend details on mount
   useEffect(() => {
     const fetchDetails = async () => {
       setLoading(true);
@@ -380,11 +455,10 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
         if (data.success) {
           setExperiment(data.experiment);
           setBuckets(data.experiment.buckets || []);
-          // Sync draft status
           setStatusDraft({
-            status: data.experiment.status || "planned",
-            started_at: data.experiment.started_at ? data.experiment.started_at.split("T")[0].split(" ")[0] : "",
-            ended_at: data.experiment.ended_at ? data.experiment.ended_at.split("T")[0].split(" ")[0] : "",
+            status: data.experiment.status,
+            started_at: data.experiment.started_at ? data.experiment.started_at.split("T")[0] : "",
+            ended_at: data.experiment.ended_at ? data.experiment.ended_at.split("T")[0] : "",
           });
         }
       } catch (err) { console.error("Detail fetch error:", err); }
@@ -393,10 +467,11 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
     fetchDetails();
   }, [initExp.id]);
 
-  const isActive = experiment.status === "active";
-
+  /**
+   * Updates experiment status (Active, Paused, Completed)
+   */
   const saveStatus = async () => {
-    setSavingStatus(true); setStatusSaved(false);
+    setSavingStatus(true);
     try {
       const payload = {
         status: statusDraft.status,
@@ -411,76 +486,100 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
       const data = await res.json();
       if (!data.success) throw new Error(data.message);
       setExperiment(p => ({ ...p, ...payload }));
-      setStatusSaved(true);
-      setTimeout(() => setStatusSaved(false), 3000);
     } catch (err) { setErrorMsg(`Failed to update status: ${err.message}`); }
     setSavingStatus(false);
   };
 
+  /**
+   * Triggers the real-time sensor collection flow:
+   * 1. Notifies backend to set 'is_locked' = true for the ESP32
+   * 2. Starts polling Supabase 'sensor_data' for any reading newer than 'now'
+   */
   const startSensorCollection = async (bucket) => {
     setErrorMsg("");
-    if (processing) { setErrorMsg("Another bucket is already collecting. Please wait."); return; }
-    if (bucket.status === "Data Collected") return;
-    if (!supabase) {
-      setErrorMsg("Supabase client is not initialized. Check your environment variables.");
-      return;
-    }
+    if (processing) { setErrorMsg("Sensor is already in use."); return; }
+    if (!supabase) { setErrorMsg("Supabase client is not initialized."); return; }
+    
     setProcessing(true); setActiveBucketId(bucket.id);
     const startTime = new Date().toISOString();
+    
+    // Step 1: Tell ESP32 to start via sensor_status table
     const { error: patchError } = await supabase
       .from("sensor_status")
       .update({ tub_id: bucket.id, is_locked: true, is_active: true })
       .eq("sensor_id", "esp32-001");
+      
     if (patchError) {
-      setErrorMsg("Failed to activate sensor. Check Supabase connection.");
+      setErrorMsg("Failed to reach sensor.");
       setProcessing(false); setActiveBucketId(null); return;
     }
+
+    // Step 2: Poll for the incoming reading
     const pollInterval = setInterval(async () => {
       const { data: sdArr, error: sdErr } = await supabase
         .from("sensor_data").select("*")
         .eq("tub_id", bucket.id)
         .gte("created_at", startTime)
         .order("created_at", { ascending: false }).limit(1);
-      if (sdErr) { console.error("Poll error:", sdErr); return; }
+        
       if (sdArr && sdArr.length > 0) {
         clearInterval(pollInterval); delete pollTimers.current[bucket.id];
         const sd = sdArr[0];
         setBuckets(prev => prev.map(b =>
-          b.id === bucket.id ? { ...b, status: "Data Collected", sensor_data: parseSensorData(sd), raw_sd: sd } : b
+          b.id === bucket.id ? { ...b, status: "Data Collected", sensor_data: parseSensorData(sd) } : b
         ));
         setProcessing(false); setActiveBucketId(null);
+        // Release lock
         await supabase.from("sensor_status").update({ is_locked: false }).eq("sensor_id", "esp32-001");
       }
     }, 3000);
+    
     pollTimers.current[bucket.id] = pollInterval;
+    // Timeout after 5 minutes
     setTimeout(() => {
       if (pollTimers.current[bucket.id]) {
-        clearInterval(pollTimers.current[bucket.id]); delete pollTimers.current[bucket.id];
+        clearInterval(pollTimers.current[bucket.id]);
         setProcessing(false); setActiveBucketId(null);
-        setErrorMsg("Sensor timed out. Please try again.");
+        setErrorMsg("Sensor timed out.");
       }
     }, 5 * 60 * 1000);
   };
 
-  const allCollected = buckets.every(b => b.status === "Data Collected");
+  /**
+   * Manually record a plant health score (0.0 to 1.0) for a specific reading
+   */
+  const submitHealth = async (bucketId, sensorDataId) => {
+    const score = healthInputs[bucketId] || "";
+    const val = parseFloat(score);
+    if (isNaN(val) || val < 0 || val > 1) {
+      setErrorMsg("Health score must be between 0 and 1.");
+      return;
+    }
+    setUpdatingHealth(bucketId);
+    try {
+      const { error } = await supabase.from("sensor_data").update({ health: val }).eq("id", sensorDataId);
+      if (error) throw error;
+      setBuckets(prev => prev.map(b => 
+        b.id === bucketId ? { ...b, sensor_data: { ...b.sensor_data, health: val } } : b
+      ));
+    } catch (err) { setErrorMsg(`Failed to save score: ${err.message}`); }
+    setUpdatingHealth(null);
+  };
+
+  const isActive = experiment.status === "active";
 
   return (
     <div className="space-y-6">
-      {/* Header */}
+      {/* Header & Controls */}
       <div className="flex items-center gap-4 border-b border-white/10 pb-6">
-        <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-lg transition-colors text-gray-400 hover:text-white">
+        <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-lg text-gray-400">
           <span className="material-symbols-outlined">arrow_back</span>
         </button>
-        <div className="flex-1 min-w-0">
+        <div className="flex-1">
           <h2 className="text-2xl font-bold text-white">{experiment.experiment_number}: {experiment.title}</h2>
-          <p className="text-sm text-gray-400 mt-1">{experiment.description || "No description"}</p>
+          <p className="text-sm text-gray-400">{experiment.description || "No description provided."}</p>
         </div>
         <StatusBadge status={experiment.status} />
-        {allCollected && (
-          <div className="bg-green-500/20 text-green-400 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2">
-            <span className="material-symbols-outlined text-lg">check_circle</span> All Collected
-          </div>
-        )}
       </div>
 
       {errorMsg && (
@@ -489,177 +588,131 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
         </div>
       )}
 
-      {/* ── Status Editor ── */}
+      {/* -- Action Panel -- */}
       <div className="bg-white/3 border border-white/10 rounded-xl p-5 space-y-4">
-        <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide flex items-center gap-2 mb-4">
-          <span className="material-symbols-outlined text-sm">tune</span> Experiment Actions
-        </h3>
-        
         <div className="flex flex-wrap items-center gap-3">
           {experiment.status === "planned" && (
             <button onClick={() => {
-              setStatusDraft(p => ({ ...p, status: "active", started_at: new Date().toISOString().split("T")[0] }));
-              setTimeout(() => document.getElementById("save-status-btn").click(), 50);
-            }} className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-lg transition-colors flex items-center gap-2">
+              statusDraft.status = "active";
+              statusDraft.started_at = new Date().toISOString().split("T")[0];
+              saveStatus();
+            }} className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-lg flex items-center gap-2">
               <span className="material-symbols-outlined text-sm">play_arrow</span> Start Experiment
             </button>
           )}
 
           {experiment.status === "active" && (
-            <button onClick={() => {
-              setStatusDraft(p => ({ ...p, status: "paused" }));
-              setTimeout(() => document.getElementById("save-status-btn").click(), 50);
-            }} className="px-5 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-400 border border-amber-500/50 font-semibold rounded-lg transition-colors flex items-center gap-2">
-              <span className="material-symbols-outlined text-sm">pause</span> Pause Experiment
-            </button>
+            <>
+              <button onClick={() => { statusDraft.status = "paused"; saveStatus(); }} 
+                className="px-5 py-2.5 bg-amber-500/20 text-amber-400 border border-amber-500/50 font-semibold rounded-lg hover:bg-amber-500/30">
+                <span className="material-symbols-outlined text-sm">pause</span> Pause
+              </button>
+              <button onClick={() => { 
+                statusDraft.status = "completed"; 
+                statusDraft.ended_at = new Date().toISOString().split("T")[0];
+                saveStatus(); 
+              }} 
+                className="px-5 py-2.5 bg-blue-500/20 text-blue-400 border border-blue-500/50 font-semibold rounded-lg hover:bg-blue-500/30">
+                <span className="material-symbols-outlined text-sm">done_all</span> Complete
+              </button>
+            </>
           )}
-
-          {experiment.status === "paused" && (
-            <button onClick={() => {
-              setStatusDraft(p => ({ ...p, status: "active" }));
-              setTimeout(() => document.getElementById("save-status-btn").click(), 50);
-            }} className="px-5 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/50 font-semibold rounded-lg transition-colors flex items-center gap-2">
-              <span className="material-symbols-outlined text-sm">play_arrow</span> Resume Experiment
-            </button>
-          )}
-
-          {(experiment.status === "active" || experiment.status === "paused") && (
-            <button onClick={() => {
-              setStatusDraft(p => ({ ...p, status: "completed", ended_at: new Date().toISOString().split("T")[0] }));
-              setTimeout(() => document.getElementById("save-status-btn").click(), 50);
-            }} className="px-5 py-2.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 border border-blue-500/50 font-semibold rounded-lg transition-colors flex items-center gap-2">
-              <span className="material-symbols-outlined text-sm">done_all</span> Mark Completed
-            </button>
-          )}
-        </div>
-
-        {experiment.status !== "planned" && (
-          <div className="mt-4 flex flex-wrap gap-4 pt-4 border-t border-white/5 text-sm text-gray-400">
-            <div className="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/10">
-              <span className="material-symbols-outlined text-sm">play_circle</span>
-              Started: <span className="text-white font-medium">{experiment.started_at ? new Date(experiment.started_at).toLocaleDateString() : "Unknown"}</span>
-            </div>
-            {experiment.status === "completed" && (
-              <div className="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/10">
-                <span className="material-symbols-outlined text-sm">check_circle</span>
-                Ended: <span className="text-white font-medium">{experiment.ended_at ? new Date(experiment.ended_at).toLocaleDateString() : "Unknown"}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div className="hidden">
-          <button id="save-status-btn" onClick={saveStatus} disabled={savingStatus}
-            className="px-4 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2">
-            <span className="material-symbols-outlined text-sm">save</span>
-            {savingStatus ? "Saving..." : "Save Details"}
-          </button>
         </div>
       </div>
 
-      {!isActive && (
-        <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400 text-sm flex items-center gap-2">
-          <span className="material-symbols-outlined text-lg">info</span>
-          Sense &amp; Predict are only available for <strong>Active</strong> experiments. Update the status above to enable them.
-        </div>
-      )}
-
-      {/* ── Bucket Cards ── */}
+      {/* -- Individual Bucket Grid -- */}
       <div className="space-y-4">
-        <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide">Tubs</h3>
         {buckets.map((b) => {
-          const isActiveB = activeBucketId === b.id;
+          const isSensing = activeBucketId === b.id;
           const isCollected = b.status === "Data Collected";
-          const isOpen = expandedBucket === b.id;
-          const sd = b.sensor_data;
-
+          const isExpanded = expandedBucket === b.id;
           return (
-            <div key={b.id} className={`rounded-xl border transition-all ${
-              isActiveB ? "border-emerald-500 bg-emerald-500/10" :
-              isCollected ? "border-green-500/30 bg-green-500/5" : "border-white/10 bg-white/5"
-            }`}>
-              {isActiveB && <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-green-500 rounded-t-xl animate-pulse" />}
-
+            <div key={b.id} className={`rounded-xl border transition-all ${isSensing ? "border-emerald-500 bg-emerald-500/10" : isExpanded ? "border-emerald-500/30 bg-white/5" : "border-white/10 bg-white/5"}`}>
+              {isSensing && <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-green-500 rounded-t-xl animate-pulse" />}
               <div className="flex items-center justify-between p-5">
                 <div>
                   <h3 className="font-semibold text-lg text-white flex items-center gap-2">
-                    {b.bucket_number}
-                    {isCollected && <span className="material-symbols-outlined text-green-500 text-xl">check_circle</span>}
+                    {b.bucket_number} {isCollected && <span className="material-symbols-outlined text-green-500">check_circle</span>}
                   </h3>
-                  <div className="flex gap-5 mt-1 text-sm text-gray-400">
-                    <span className="flex items-center gap-1.5"><span className="material-symbols-outlined text-sm">eco</span>{b.plant_type}</span>
-                    <span className="flex items-center gap-1.5"><span className="material-symbols-outlined text-sm">landscape</span>{b.soil_type}</span>
-                    <span className="text-gray-600 text-xs">ID: {b.id}</span>
+                  <div className="flex gap-4 mt-1 text-xs text-gray-500 uppercase tracking-widest">
+                    <span>{b.plant_type}</span> | <span>{b.soil_type}</span>
                   </div>
-
-                  {/* Quick-view for sensor data when NOT expanded */}
-                  {b.sensor_data && (
-                    <div className="mt-4 pt-4 border-t border-white/5">
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        <MiniReading label="Soil pH" value={b.sensor_data.ph} unit="" />
-                        <MiniReading label="Moisture" value={b.sensor_data.moisture} unit="%" />
-                        <MiniReading label="Nitrogen" value={b.sensor_data.nitrogen} unit="mg/kg" />
-                        <MiniReading label="EC" value={b.sensor_data.ec} unit="uS" />
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 <div className="flex items-center gap-3">
-                  {/* Sense button — only active experiments */}
-                  {isActive && (
-                    isCollected ? (
-                      <button onClick={() => setExpandedBucket(isOpen ? null : b.id)}
-                        className="px-5 py-2 rounded-lg border border-green-500/30 bg-green-500/10 text-green-400 text-sm font-medium flex items-center gap-2">
-                        <span className="material-symbols-outlined text-sm">monitoring</span>
-                        {isOpen ? "Hide Data" : "View Data"}
-                      </button>
-                    ) : isActiveB ? (
-                      <div className="flex items-center gap-2 text-emerald-400 font-medium px-4 py-2">
+                  {isActive ? (
+                    isSensing ? (
+                      <div className="flex items-center gap-2 text-emerald-400 font-medium animate-pulse">
                         <span className="material-symbols-outlined animate-spin text-xl">refresh</span> Sensing...
                       </div>
+                    ) : isCollected ? (
+                      /* After data is collected, show "View Data" which toggles the expanded panel */
+                      <button onClick={() => setExpandedBucket(isExpanded ? null : b.id)}
+                        className={`px-5 py-2.5 font-medium rounded-lg flex items-center gap-2 transition-all ${
+                          isExpanded 
+                            ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" 
+                            : "bg-white/10 hover:bg-white/15 text-white border border-white/10"
+                        }`}>
+                        <span className="material-symbols-outlined text-lg">{isExpanded ? "expand_less" : "visibility"}</span>
+                        {isExpanded ? "Hide Data" : "View Data"}
+                      </button>
                     ) : (
+                      /* First time: show "Sense Now" */
                       <button onClick={() => startSensorCollection(b)} disabled={processing}
-                        className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors flex items-center gap-2">
-                        <span className="material-symbols-outlined text-lg">sensors</span> Sense Now
+                        className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-lg flex items-center gap-2 disabled:opacity-50">
+                        <span className="material-symbols-outlined text-lg">sensors</span> 
+                        Sense Now
                       </button>
                     )
-                  )}
-
-                  {/* Predict button — only active experiments */}
-                  {isActive && (
-                    <button disabled title="Prediction model not yet linked"
-                      className="px-4 py-2 rounded-lg border border-purple-500/30 text-purple-400/50 text-sm font-medium cursor-not-allowed flex items-center gap-2">
-                      <span className="material-symbols-outlined text-sm">psychology</span> Predict
-                    </button>
-                  )}
-
-                  {/* Non-active: show status pill */}
-                  {!isActive && (
-                    <span className="text-xs text-gray-500 italic px-3 py-2">
-                      {experiment.status === "completed" ? "Completed" : experiment.status === "planned" ? "Not started" : "Paused"}
-                    </span>
-                  )}
+                  ) : <span className="text-xs text-gray-600 italic">Experiment not active</span>}
                 </div>
               </div>
 
-              {/* Expanded sensor data */}
-              {isCollected && isOpen && sd && (
-                <div className="px-5 pb-5 pt-1 border-t border-white/10">
-                  <div className="text-xs text-gray-500 mb-3">
-                    Recorded: {sd.createdAt ? new Date(sd.createdAt).toLocaleString() : "—"}
+              {/* Expanded Data View — shown when "View Data" is clicked */}
+              {isCollected && isExpanded && (
+                <div className="px-5 pb-5 border-t border-white/10 space-y-4">
+                  {/* Sensor readings grid */}
+                  <div className="pt-4">
+                    <p className="text-xs text-gray-500 mb-3">
+                      Reading from: {b.sensor_data?.createdAt ? new Date(b.sensor_data.createdAt).toLocaleString() : "Unknown"}
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <MiniReading label="Soil pH" value={b.sensor_data?.ph} unit="" />
+                      <MiniReading label="Moisture" value={b.sensor_data?.moisture} unit="%" />
+                      <MiniReading label="Nitrogen" value={b.sensor_data?.nitrogen} unit="mg/kg" />
+                      <MiniReading label="Phosphorus" value={b.sensor_data?.phosphorus} unit="mg/kg" />
+                      <MiniReading label="Potassium" value={b.sensor_data?.potassium} unit="mg/kg" />
+                      <MiniReading label="Soil Temp" value={b.sensor_data?.temperature} unit="°C" />
+                      <MiniReading label="Soil EC" value={b.sensor_data?.ec} unit="dS/m" />
+                      <MiniReading label="Plant Health" value={b.sensor_data?.health} unit="" />
+                    </div>
                   </div>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-                    <SensorCard label="Soil pH"      value={sd.ph}          unit=""      icon="science" />
-                    <SensorCard label="Moisture"     value={sd.moisture}    unit="%"     icon="water_drop" />
-                    <SensorCard label="Soil Temp"    value={sd.temperature} unit="°C"    icon="thermostat" />
-                    <SensorCard label="Nitrogen"     value={sd.nitrogen}    unit="mg/L"  icon="eco" />
-                    <SensorCard label="Phosphorus"   value={sd.phosphorus}  unit="mg/L"  icon="eco" />
-                    <SensorCard label="Potassium"    value={sd.potassium}   unit="mg/L"  icon="eco" />
-                    <SensorCard label="Soil EC"      value={sd.ec}          unit="dS/m"  icon="electrical_services" />
-                    <SensorCard label="Water pH"     value={sd.waterPh}     unit=""      icon="water" />
-                    <SensorCard label="Air Temp"     value={sd.airTemp}     unit="°C"    icon="air" />
-                    <SensorCard label="Air Humidity" value={sd.airHumidity} unit="%"     icon="humidity_percentage" />
+
+                  {/* Health Score Input */}
+                  <div className="flex items-center gap-4 pt-3 border-t border-white/5">
+                    <input type="number" min="0" max="1" step="0.1" placeholder="Score 0-1"
+                      value={healthInputs[b.id] ?? (b.sensor_data?.health || "")}
+                      onChange={(e) => setHealthInputs(p => ({ ...p, [b.id]: e.target.value }))}
+                      className="bg-slate-900 border border-white/10 rounded-lg px-3 py-1.5 text-sm w-32 focus:border-emerald-500 outline-none" />
+                    <button onClick={() => submitHealth(b.id, b.sensor_data?.id)} disabled={updatingHealth === b.id}
+                      className="text-emerald-400 text-xs font-bold hover:underline disabled:opacity-50">
+                      {updatingHealth === b.id ? "Saving..." : "Update Health Score"}
+                    </button>
+                  </div>
+
+                  {/* Sense Again confirmation */}
+                  <div className="flex items-center justify-between pt-3 border-t border-white/5">
+                    <p className="text-xs text-gray-500">Want to take a fresh reading for this tub?</p>
+                    <button 
+                      onClick={() => {
+                        setExpandedBucket(null);
+                        startSensorCollection(b);
+                      }} 
+                      disabled={processing}
+                      className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold rounded-lg flex items-center gap-2 disabled:opacity-50 transition-all">
+                      <span className="material-symbols-outlined text-base">sensors</span> 
+                      Sense Now
+                    </button>
                   </div>
                 </div>
               )}
@@ -671,80 +724,35 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
   );
 };
 
-// ─── History Tab ────────────────────────────────────────────────────────────────
+// --------------------------------------------------------------------------------
+// TAB 3: GLOBAL SENSOR HISTORY
+// --------------------------------------------------------------------------------
 const HistoryTab = () => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [errorDetails, setErrorDetails] = useState(null);
 
   useEffect(() => {
     (async () => {
-      setLoading(true); setErrorDetails(null);
-      if (!supabase) {
-        setErrorDetails("Supabase client not initialized. Ensure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in Render Environment Variables.");
-        setLoading(false);
-        return;
-      }
-      const { data, error } = await supabase
-        .from("sensor_data").select("*")
-        .order("created_at", { ascending: false }).limit(30);
-      
-      if (error) {
-        setErrorDetails(error.message);
-      } else {
-        setHistory(data || []);
-      }
+      const { data, error } = await supabase.from("sensor_data").select("*").order("created_at", { ascending: false }).limit(20);
+      if (!error) setHistory(data || []);
       setLoading(false);
     })();
   }, []);
 
   if (loading) return <div className="text-center py-16 text-gray-400">Loading history...</div>;
-  
-  if (errorDetails) return (
-    <div className="p-6 bg-red-500/10 border border-red-500/30 rounded-2xl text-red-400">
-      <div className="flex items-center gap-3 mb-2 font-bold">
-        <span className="material-symbols-outlined">warning</span> Query Error
-      </div>
-      <p className="text-sm">{errorDetails}</p>
-      <div className="mt-4 pt-4 border-t border-red-500/20 text-[10px] opacity-50">
-        URL: {import.meta.env.VITE_SUPABASE_URL || "NOT SET"}
-      </div>
-    </div>
-  );
-  if (history.length === 0) return (
-    <div className="text-center py-16">
-      <span className="material-symbols-outlined text-5xl text-gray-600 mb-4 block">history</span>
-      <p className="text-gray-400">No sensor readings recorded yet.</p>
-    </div>
-  );
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-gray-400">Showing the last {history.length} sensor readings across all tubs.</p>
       {history.map((sd) => (
-        <div key={sd.id} className="bg-white/5 border border-white/10 rounded-xl p-4 hover:border-white/20 transition-all">
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <span className="text-sm font-semibold text-white">Tub ID: {sd.tub_id}</span>
-              <span className="ml-3 text-xs text-gray-500">{sd.sensor_id}</span>
-            </div>
-            <span className="text-xs text-gray-500">{new Date(sd.created_at).toLocaleString()}</span>
+        <div key={sd.id} className="bg-white/5 border border-white/10 rounded-xl p-4">
+          <div className="flex justify-between text-xs text-gray-500 mb-2">
+            <span className="font-bold text-gray-300 uppercase">Tub {sd.tub_id} ({sd.sensor_id})</span>
+            <span>{new Date(sd.created_at).toLocaleString()}</span>
           </div>
-          <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 text-xs">
-            {[
-              ["pH", sd.soil_ph], ["Moist", sd.soil_moisture != null ? sd.soil_moisture + "%" : null],
-              ["Temp", sd.soil_temp != null ? sd.soil_temp + "°C" : null],
-              ["N", sd.nitrogen], ["P", sd.phosphorus], ["K", sd.potassium],
-              ["EC", sd.soil_ec], ["AirT", sd.air_temp != null ? sd.air_temp + "°C" : null],
-              ["Hum", sd.air_humidity != null ? sd.air_humidity + "%" : null]
-            ].map(([k, v]) => (
-              <div key={k} className="bg-white/5 rounded-lg p-2 text-center">
-                <div className="text-gray-500">{k}</div>
-                <div className="text-white font-medium">
-                  {v !== null && v !== undefined ? (typeof v === "number" ? Number(v).toFixed(1) : v) : "—"}
-                </div>
-              </div>
-            ))}
+          <div className="flex flex-wrap gap-2">
+            <span className="bg-white/5 px-2 py-1 rounded text-xs">pH: {sd.soil_ph}</span>
+            <span className="bg-white/5 px-2 py-1 rounded text-xs">Moist: {sd.soil_moisture}%</span>
+            <span className="bg-white/5 px-2 py-1 rounded text-xs">Temp: {sd.soil_temp}°C</span>
           </div>
         </div>
       ))}
@@ -752,47 +760,61 @@ const HistoryTab = () => {
   );
 };
 
-// ─── Main Page ──────────────────────────────────────────────────────────────────
+// --------------------------------------------------------------------------------
+// ROOT COMPONENT
+// --------------------------------------------------------------------------------
 export default function ExperimentsPage() {
   const [activeTab, setActiveTab] = useState("new");
+  const [backendUp, setBackendUp] = useState(true);
+
+  // Periodic health check for backend service
+  useEffect(() => {
+    const check = async () => setBackendUp(await checkBackendHealth());
+    check();
+    const interval = setInterval(check, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const tabs = [
-    { id: "new",     label: "New Experiment", icon: "add_circle" },
-    { id: "current", label: "Experiments",    icon: "science" },
-    { id: "history", label: "Sensor History", icon: "history" },
+    { id: "new",     label: "New",       icon: "add_circle" },
+    { id: "current", label: "Experiments", icon: "science" },
+    { id: "history", label: "History",     icon: "history" },
   ];
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white overflow-hidden font-sans">
+    <div className="flex h-screen bg-slate-950 text-white overflow-hidden">
       <Sidebar />
-      <div className="flex-1 flex flex-col h-screen">
+      <div className="flex-1 flex flex-col">
         <Header />
-        <main id="main-scroll" className="flex-1 overflow-y-auto scroll-smooth">
-          <div className="max-w-5xl mx-auto p-6 md:p-8 space-y-8">
-            <div>
-              <h1 className="text-4xl font-bold tracking-tight">Experiment &amp; Predict</h1>
-              <p className="text-gray-400 mt-2 text-lg">Create experiments, sense soil data, and generate crop predictions.</p>
+        <main className="flex-1 overflow-y-auto p-8">
+          {!backendUp && (
+            <div className="mb-6 bg-red-500/20 border border-red-500/50 p-3 rounded-xl text-center text-red-400 text-sm animate-pulse">
+              Backend Service Offline. Please check your server.
             </div>
+          )}
 
-            <div className="border-b border-white/10">
-              <div className="flex gap-1">
-                {tabs.map(tab => (
-                  <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-                    className={`py-3 px-5 font-medium flex items-center gap-2 transition-all border-b-2 text-sm ${
-                      activeTab === tab.id ? "border-emerald-500 text-emerald-400" : "border-transparent text-gray-400 hover:text-white"
-                    }`}>
-                    <span className="material-symbols-outlined text-lg">{tab.icon}</span>
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+          <div className="max-w-5xl mx-auto space-y-8">
+            <header>
+              <h1 className="text-4xl font-bold">NutriTech Center</h1>
+              <p className="text-gray-400 mt-2">Manage experiments and collect plant vitals.</p>
+            </header>
 
-            <div className="mb-16">
+            <nav className="flex gap-1 border-b border-white/10">
+              {tabs.map(tab => (
+                <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                  className={`py-3 px-6 font-medium flex items-center gap-2 border-b-2 transition-all ${
+                    activeTab === tab.id ? "border-emerald-500 text-emerald-400" : "border-transparent text-gray-400 hover:text-white"
+                  }`}>
+                  <span className="material-symbols-outlined text-lg">{tab.icon}</span> {tab.label}
+                </button>
+              ))}
+            </nav>
+
+            <section className="pb-16">
               {activeTab === "new"     && <NewExperimentTab onSuccess={() => setActiveTab("current")} />}
               {activeTab === "current" && <ExperimentsListTab />}
               {activeTab === "history" && <HistoryTab />}
-            </div>
+            </section>
           </div>
         </main>
       </div>
@@ -800,11 +822,12 @@ export default function ExperimentsPage() {
   );
 }
 
+// Utility component for compact data display
 const MiniReading = ({ label, value, unit }) => (
-  <div className="bg-white/3 border border-white/10 rounded-lg p-2">
-    <div className="text-[10px] text-gray-500 uppercase">{label}</div>
+  <div className="bg-white/5 border border-white/10 rounded-lg p-2 text-center">
+    <div className="text-[10px] text-gray-500 uppercase font-bold">{label}</div>
     <div className="text-xs font-semibold text-white">
-      {value !== null && value !== undefined ? `${value}${unit}` : "N/A"}
+      {value !== null && value !== undefined ? `${value}${unit}` : "—"}
     </div>
   </div>
 );

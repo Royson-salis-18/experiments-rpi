@@ -4,46 +4,63 @@ import joblib
 import numpy as np
 import pandas as pd
 
+"""
+NutriTech Machine Learning Service
+----------------------------------
+This service provides crop recommendations based on soil NPK ratios, 
+temperature, humidity, pH, and rainfall. It uses a pre-trained RandomForest 
+classifier.
+"""
+
 app = Flask(__name__)
-CORS(app) # Enable CORS for all routes
+# Enable CORS for cross-service communication (e.g. from frontend)
+CORS(app) 
 
-# Load the model and scaler
-model = joblib.load('model/crop_recommendation.pkl')
-scaler = joblib.load('model/scaler.pkl')
+# Load the pre-trained model and the scaler artifact
+# Note: Ensure these files exist in the 'model/' directory relative to this file
+try:
+    model = joblib.load('model/crop_recommendation.pkl')
+    scaler = joblib.load('model/scaler.pkl')
+except Exception as e:
+    print(f"[ERROR] Failed to load ML model or scaler: {str(e)}")
 
-# ... (rest of crop_metadata stays same) ...
+# Metadata for crops to provide context in recommendations (MSP, Season, Avg Yield)
 crop_metadata = {
-    'rice': {'msp': 2369, 'season': 'Kharif', 'average_yield': 2.218494541018379, 'yield_quintals': 22.1849454101838},
-    'maize': {'msp': 2249, 'season': 'Kharif', 'average_yield': 3.4272159774543587, 'yield_quintals': 34.27215977454359},
-    'chickpea': {'msp': 5440, 'season': 'Kharif'},
+    'rice': {'msp': 2369, 'season': 'Kharif', 'yield_quintals': 22.18},
+    'maize': {'msp': 2249, 'season': 'Kharif', 'yield_quintals': 34.27},
+    'chickpea': {'msp': 5440, 'season': 'Rabi'},
     'kidneybeans': {'msp': 6000, 'season': 'Kharif'},
     'pigeonpeas': {'msp': 8000, 'season': 'Kharif'},
     'mothbeans': {'msp': 5000, 'season': 'Kharif'},
     'mungbean': {'msp': 8768, 'season': 'Kharif'},
     'blackgram': {'msp': 7800, 'season': 'Kharif'},
-    'lentil': {'msp': 6025, 'season': 'Kharif'},
-    'pomegranate': {'msp': 2500, 'season': 'Kharif'},
-    'banana': {'msp': 900, 'season': 'Kharif', 'average_yield': 26.85112785404081, 'yield_quintals': 268.51127854040817},
-    'mango': {'msp': 1200, 'season': 'Kharif'},
-    'grapes': {'msp': 1800, 'season': 'Kharif'},
-    'watermelon': {'msp': 800, 'season': 'Kharif'},
-    'muskmelon': {'msp': 700, 'season': 'Kharif'},
-    'apple': {'msp': 3500, 'season': 'Kharif'},
-    'orange': {'msp': 1600, 'season': 'Kharif'},
-    'papaya': {'msp': 600, 'season': 'Kharif'},
-    'coconut': {'msp': 1000, 'season': 'Kharif', 'average_yield': 8652.000198744186, 'yield_quintals': 86520.00198744186},
+    'lentil': {'msp': 6025, 'season': 'Rabi'},
+    'pomegranate': {'msp': 2500, 'season': 'Year-round'},
+    'banana': {'msp': 900, 'season': 'Year-round', 'yield_quintals': 268.51},
+    'mango': {'msp': 1200, 'season': 'Summer'},
+    'grapes': {'msp': 1800, 'season': 'Winter'},
+    'watermelon': {'msp': 800, 'season': 'Summer'},
+    'muskmelon': {'msp': 700, 'season': 'Summer'},
+    'apple': {'msp': 3500, 'season': 'Winter'},
+    'orange': {'msp': 1600, 'season': 'Winter'},
+    'papaya': {'msp': 600, 'season': 'Year-round'},
+    'coconut': {'msp': 1000, 'season': 'Year-round', 'yield_quintals': 86520.00},
     'cotton': {'msp': 7710, 'season': 'Kharif'},
-    'jute': {'msp': 4750, 'season': 'Kharif', 'average_yield': 7.555392696430939, 'yield_quintals': 75.5539269643094},
-    'coffee': {'msp': 15000, 'season': 'Kharif'}
+    'jute': {'msp': 4750, 'season': 'Kharif', 'yield_quintals': 75.55},
+    'coffee': {'msp': 15000, 'season': 'Year-round'}
 }
-
 
 @app.route('/')
 def home():
+    """Simple UI for testing the model manually"""
     return render_template('index.html')
 
 @app.route('/predict-api', methods=['POST'])
 def predict_api():
+    """
+    JSON API for crop recommendation.
+    Expected Payload: { "N": float, "P": float, "K": float, "temperature": float, ... }
+    """
     try:
         data = request.get_json()
         feature_list = [
@@ -56,16 +73,16 @@ def predict_api():
             float(data.get('rainfall', 0))
         ]
         
-        # Create a DataFrame with feature names
+        # Format as DataFrame with exact feature names used during training
         features = pd.DataFrame([feature_list], columns=['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall'])
 
-        # Scale the input features
+        # Apply the same scaling transformation as used during training
         scaled_features = scaler.transform(features)
 
-        # Get prediction probabilities
+        # Retrieve prediction probabilities for all classes
         probabilities = model.predict_proba(scaled_features)[0]
         
-        # Get top 5 predictions
+        # Sort and pick the top 5 most likely crops
         top5_indices = np.argsort(probabilities)[-5:][::-1]
         top5_crops = model.classes_[top5_indices]
         
@@ -73,7 +90,9 @@ def predict_api():
         for i, crop in enumerate(top5_crops):
             prob = probabilities[top5_indices[i]]
             meta = crop_metadata.get(crop, {})
+            # Simplified profit calculation: Estimated Yield * MSP
             profit = meta.get('yield_quintals', 0) * meta.get('msp', 0)
+            
             recommendations.append({
                 'crop': crop.capitalize(),
                 'confidence': f"{prob*100:.1f}%",
@@ -94,70 +113,34 @@ def predict_api():
 
 @app.route('/predict', methods=['POST'])
 def predict():
+    """Form-based prediction for the internal result.html template"""
     if request.method == 'POST':
         data = request.form
-        feature_list = [
-            float(data['N']),
-            float(data['P']),
-            float(data['K']),
-            float(data['temperature']),
-            float(data['humidity']),
-            float(data['ph']),
-            float(data['rainfall'])
-        ]
-        
-        # Create a DataFrame with feature names
-        features = pd.DataFrame([feature_list], columns=['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall'])
-
-        # Scale the input features
-        scaled_features = scaler.transform(features)
-
-        # Get prediction probabilities
-        probabilities = model.predict_proba(scaled_features)[0]
-        
-        # Get top 5 predictions
-        top5_indices = np.argsort(probabilities)[-5:][::-1]
-        top5_crops = model.classes_[top5_indices]
-        
-        recommendations = []
-        for crop in top5_crops:
-            meta = crop_metadata.get(crop, {})
-            profit = meta.get('yield_quintals', 0) * meta.get('msp', 0)
-            recommendations.append({
-                'crop': crop.capitalize(),
-                'profit': f'₹{profit:,.2f}',
-                'yield': f"{meta.get('yield_quintals', 'N/A')} quintals",
-                'season': meta.get('season', 'N/A'),
-            })
-
-        return render_template('result.html', recommendations=recommendations)
-
-@app.route('/predict-example')
-def predict_example():
-    # ... (same as before) ...
-    feature_list = [90, 42, 43, 20.879744, 82.002744, 6.502985, 202.935536]
-    features = pd.DataFrame([feature_list], columns=['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall'])
-    scaled_features = scaler.transform(features)
-    probabilities = model.predict_proba(scaled_features)[0]
-    top5_indices = np.argsort(probabilities)[-5:][::-1]
-    top5_crops = model.classes_[top5_indices]
-    
-    recommendations = []
-    for crop in top5_crops:
-        meta = crop_metadata.get(crop, {})
-        profit = meta.get('yield_quintals', 0) * meta.get('msp', 0)
-        recommendations.append({
-            'crop': crop.capitalize(),
-            'profit': f'₹{profit:,.2f}',
-            'yield': f"{meta.get('yield_quintals', 'N/A')} quintals",
-            'season': meta.get('season', 'N/A'),
-            'sustainability': 'N/A'
-        })
-
-    return render_template('result.html', recommendations=recommendations)
-
+        try:
+            feature_list = [float(data[f]) for f in ['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall']]
+            features = pd.DataFrame([feature_list], columns=['N', 'P', 'K', 'temperature', 'humidity', 'ph', 'rainfall'])
+            scaled_features = scaler.transform(features)
+            
+            probabilities = model.predict_proba(scaled_features)[0]
+            top5_indices = np.argsort(probabilities)[-5:][::-1]
+            top5_crops = model.classes_[top5_indices]
+            
+            recommendations = []
+            for crop in top5_crops:
+                meta = crop_metadata.get(crop, {})
+                profit = meta.get('yield_quintals', 0) * meta.get('msp', 0)
+                recommendations.append({
+                    'crop': crop.capitalize(),
+                    'profit': f'₹{profit:,.2f}',
+                    'yield': f"{meta.get('yield_quintals', 'N/A')} quintals",
+                    'season': meta.get('season', 'N/A'),
+                })
+            return render_template('result.html', recommendations=recommendations)
+        except Exception as e:
+            return str(e), 400
 
 if __name__ == '__main__':
     import os
+    # Default to port 5001 to avoid conflict with backend on 5000
     port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port)
