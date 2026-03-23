@@ -444,8 +444,37 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
   const [healthInputs, setHealthInputs] = useState({});
   const [updatingHealth, setUpdatingHealth] = useState(null);
   const pollTimers = useRef({});
+  const healthPollRef = useRef(null);
 
-  // Sync state with full backend details on mount
+  /**
+   * Re-fetches the latest sensor_data row for every bucket from Supabase
+   * and refreshes only the health + sensor_data fields in local state.
+   * Called on mount AND every 8 seconds to keep health values in sync.
+   */
+  const refreshBucketHealth = async (bucketsToRefresh) => {
+    if (!supabase || !bucketsToRefresh?.length) return;
+    const refreshed = await Promise.all(
+      bucketsToRefresh.map(async (bucket) => {
+        const { data: sdRows } = await supabase
+          .from("sensor_data")
+          .select("*")
+          .eq("tub_id", bucket.id)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (sdRows && sdRows.length > 0) {
+          return { ...bucket, status: "Data Collected", sensor_data: parseSensorData(sdRows[0]) };
+        }
+        return bucket;
+      })
+    );
+    setBuckets(refreshed);
+    return refreshed; // return so callers can inspect the fresh values
+  };
+
+  /**
+   * Fetch full experiment details and the latest sensor reading per tub.
+   * Also starts an 8-second polling interval that keeps health values current.
+   */
   useEffect(() => {
     const fetchDetails = async () => {
       setLoading(true);
@@ -454,7 +483,15 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
         const data = await res.json();
         if (data.success) {
           setExperiment(data.experiment);
-          setBuckets(data.experiment.buckets || []);
+          const fetchedBuckets = data.experiment.buckets || [];
+
+          // Initial health fetch
+          if (supabase) {
+            await refreshBucketHealth(fetchedBuckets);
+          } else {
+            setBuckets(fetchedBuckets);
+          }
+
           setStatusDraft({
             status: data.experiment.status,
             started_at: data.experiment.started_at ? data.experiment.started_at.split("T")[0] : "",
@@ -464,12 +501,24 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
       } catch (err) { console.error("Detail fetch error:", err); }
       setLoading(false);
     };
+
     fetchDetails();
+
+    // Poll every 8 seconds to refresh health values across all buckets
+    healthPollRef.current = setInterval(() => {
+      // Use functional updater to read latest buckets without stale closure
+      setBuckets(prev => {
+        refreshBucketHealth(prev); // fire-and-forget; setBuckets inside will re-render
+        return prev; // return prev so React doesn't re-render for THIS call
+      });
+    }, 8000);
+
+    return () => {
+      if (healthPollRef.current) clearInterval(healthPollRef.current);
+    };
   }, [initExp.id]);
 
-  /**
-   * Updates experiment status (Active, Paused, Completed)
-   */
+  /** Updates experiment status (Active, Paused, Completed) */
   const saveStatus = async () => {
     setSavingStatus(true);
     try {
@@ -491,22 +540,46 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
   };
 
   /**
-   * Triggers the real-time sensor collection flow:
-   * 1. Notifies backend to set 'is_locked' = true for the ESP32
-   * 2. Starts polling Supabase 'sensor_data' for any reading newer than 'now'
+   * Triggers sensor collection for a tub.
+   * GATE 1 (global): Scans ALL buckets — if any has health=0, blocks sensing on
+   *   every tub and names the offending bucket so the user knows where to go.
+   * GATE 2 (self): Double-checks the clicked bucket's own health.
    */
   const startSensorCollection = async (bucket) => {
     setErrorMsg("");
     if (processing) { setErrorMsg("Sensor is already in use."); return; }
     if (!supabase) { setErrorMsg("Supabase client is not initialized."); return; }
+
+    // GATE 1 — Re-fetch latest health for ALL buckets right now, then scan
+    const latestBuckets = await refreshBucketHealth(
+      // We need the current buckets list; use the state snap captured by closure
+      buckets
+    );
+    const allBuckets = latestBuckets || buckets;
+
+    const blockingBucket = allBuckets.find(
+      (b) => b.sensor_data && (b.sensor_data.health === 0 || b.sensor_data.health == null)
+    );
+
+    if (blockingBucket) {
+      const isCurrentBucket = blockingBucket.id === bucket.id;
+      const bucketLabel = blockingBucket.bucket_number || `Tub #${blockingBucket.id}`;
+      setErrorMsg(
+        isCurrentBucket
+          ? `⚠ Health score is missing for this bucket (${bucketLabel}). Please enter it below before sensing.`
+          : `⚠ Cannot sense — ${bucketLabel} still has a missing health score. Please fill it in first, then come back here.`
+      );
+      setExpandedBucket(blockingBucket.id); // auto-expand the offending bucket
+      return;
+    }
     
     setProcessing(true); setActiveBucketId(bucket.id);
     const startTime = new Date().toISOString();
     
-    // Step 1: Tell ESP32 to start via sensor_status table
+    // Tell ESP32 to start via sensor_status table
     const { error: patchError } = await supabase
       .from("sensor_status")
-      .update({ tub_id: bucket.id, is_locked: true, is_active: true })
+      .update({ tub_id: bucket.id, is_locked: true, is_active: true }) 
       .eq("sensor_id", "esp32-001");
       
     if (patchError) {
@@ -514,11 +587,11 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
       setProcessing(false); setActiveBucketId(null); return;
     }
 
-    // Step 2: Poll for the incoming reading
+    // Poll for the incoming reading
     const pollInterval = setInterval(async () => {
-      const { data: sdArr, error: sdErr } = await supabase
+      const { data: sdArr } = await supabase
         .from("sensor_data").select("*")
-        .eq("tub_id", bucket.id)
+        .eq("tub_id", bucket.id) 
         .gte("created_at", startTime)
         .order("created_at", { ascending: false }).limit(1);
         
@@ -528,7 +601,7 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
         setBuckets(prev => prev.map(b =>
           b.id === bucket.id ? { ...b, status: "Data Collected", sensor_data: parseSensorData(sd) } : b
         ));
-        // Auto-expand the bucket to show the fresh data immediately
+        // Auto-expand to show fresh data and prompt for health entry
         setExpandedBucket(bucket.id);
         setProcessing(false); setActiveBucketId(null);
         // Release lock
@@ -537,7 +610,6 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
     }, 3000);
     
     pollTimers.current[bucket.id] = pollInterval;
-    // Timeout after 5 minutes
     setTimeout(() => {
       if (pollTimers.current[bucket.id]) {
         clearInterval(pollTimers.current[bucket.id]);
@@ -548,23 +620,73 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
   };
 
   /**
-   * Manually record a plant health score (0.0 to 1.0) for a specific reading
+   * Saves a health score (0.01 - 1.00) to the sensor_data row via the backend.
+   * After a successful PATCH, re-fetches the row from Supabase to confirm the
+   * health value is genuinely > 0 in the DB before unlocking sensing.
    */
-  const submitHealth = async (bucketId, sensorDataId) => {
-    const score = healthInputs[bucketId] || "";
-    const val = parseFloat(score);
-    if (isNaN(val) || val < 0 || val > 1) {
-      setErrorMsg("Health score must be between 0 and 1.");
+  const submitHealth = async (bucketId) => {
+    const score = healthInputs[bucketId];
+    if (score === undefined || score === "") {
+      setErrorMsg("Please enter a health score.");
       return;
     }
+    const val = parseFloat(score);
+    if (isNaN(val) || val <= 0 || val > 1) {
+      setErrorMsg("Health score must be between 0.01 and 1.00.");
+      return;
+    }
+
     setUpdatingHealth(bucketId);
+    setErrorMsg("");
+
     try {
-      const { error } = await supabase.from("sensor_data").update({ health: val }).eq("id", sensorDataId);
-      if (error) throw error;
-      setBuckets(prev => prev.map(b => 
-        b.id === bucketId ? { ...b, sensor_data: { ...b.sensor_data, health: val } } : b
-      ));
-    } catch (err) { setErrorMsg(`Failed to save score: ${err.message}`); }
+      // 1. Send PATCH to backend
+      const res = await fetch(`${API_URL}/sensor_data/${bucketId}/health`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ health: val }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message);
+
+      // 2. Re-fetch from Supabase to confirm the DB value is actually > 0
+      //    (guards against any silent failure or network inconsistency)
+      const { data: sdRows, error: fetchErr } = await supabase
+        .from("sensor_data")
+        .select("id, health")
+        .eq("tub_id", bucketId)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (fetchErr) throw new Error(`DB re-check failed: ${fetchErr.message}`);
+
+      const confirmedHealth = sdRows?.[0]?.health ?? 0;
+
+      if (!confirmedHealth || confirmedHealth <= 0) {
+        // Health in DB is STILL 0 — update did not stick
+        setErrorMsg(
+          "Health score was submitted but the database still shows 0. " +
+          "Please try again or refresh the page."
+        );
+        setUpdatingHealth(null);
+        return;
+      }
+
+      // 3. DB confirmed > 0 — safe to unlock sensing
+      setBuckets(prev =>
+        prev.map(b =>
+          b.id === bucketId
+            ? { ...b, sensor_data: { ...b.sensor_data, health: confirmedHealth } }
+            : b
+        )
+      );
+      // Clear the input field
+      setHealthInputs(prev => { const n = { ...prev }; delete n[bucketId]; return n; });
+
+    } catch (err) {
+      setErrorMsg(`Failed to save score: ${err.message}`);
+    }
+
     setUpdatingHealth(null);
   };
 
@@ -572,7 +694,7 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
 
   return (
     <div className="space-y-6">
-      {/* Header & Controls */}
+      {/* Header */}
       <div className="flex items-center gap-4 border-b border-white/10 pb-6">
         <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-lg text-gray-400">
           <span className="material-symbols-outlined">arrow_back</span>
@@ -587,10 +709,13 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
       {errorMsg && (
         <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm flex items-center gap-3">
           <span className="material-symbols-outlined">error</span> {errorMsg}
+          <button onClick={() => setErrorMsg("")} className="ml-auto text-red-400/50 hover:text-red-400">
+            <span className="material-symbols-outlined text-sm">close</span>
+          </button>
         </div>
       )}
 
-      {/* -- Action Panel -- */}
+      {/* Action Panel */}
       <div className="bg-white/3 border border-white/10 rounded-xl p-5 space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           {experiment.status === "planned" && (
@@ -602,7 +727,6 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
               <span className="material-symbols-outlined text-sm">play_arrow</span> Start Experiment
             </button>
           )}
-
           {experiment.status === "active" && (
             <>
               <button onClick={() => { statusDraft.status = "paused"; saveStatus(); }} 
@@ -622,112 +746,176 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
         </div>
       </div>
 
-      {/* -- Individual Bucket Grid -- */}
+      {/* Bucket Cards */}
       <div className="space-y-4">
         {buckets.map((b) => {
           const isSensing = activeBucketId === b.id;
           const isCollected = b.status === "Data Collected";
           const isExpanded = expandedBucket === b.id;
+          const healthMissing = isCollected && (b.sensor_data?.health == null || b.sensor_data?.health === 0);
+          const canSense = isActive && !processing;
+
           return (
-            <div key={b.id} className={`rounded-xl border transition-all ${isSensing ? "border-emerald-500 bg-emerald-500/10" : isExpanded ? "border-emerald-500/30 bg-white/5" : "border-white/10 bg-white/5"}`}>
+            <div key={b.id} className={`rounded-xl border transition-all ${
+              isSensing ? "border-emerald-500 bg-emerald-500/10" : 
+              healthMissing ? "border-amber-500/40 bg-amber-500/5" :
+              isExpanded ? "border-emerald-500/30 bg-white/5" : 
+              "border-white/10 bg-white/5"
+            }`}>
               {isSensing && <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-green-500 rounded-t-xl animate-pulse" />}
+              
               <div className="flex items-center justify-between p-5">
                 <div>
                   <h3 className="font-semibold text-lg text-white flex items-center gap-2">
-                    {b.bucket_number} {isCollected && <span className="material-symbols-outlined text-green-500">check_circle</span>}
+                    {b.bucket_number}
+                    {isCollected && !healthMissing && <span className="material-symbols-outlined text-green-500">check_circle</span>}
+                    {healthMissing && <span className="material-symbols-outlined text-amber-400 text-base">warning</span>}
                   </h3>
                   <div className="flex gap-4 mt-1 text-xs text-gray-500 uppercase tracking-widest">
                     <span>{b.plant_type}</span> | <span>{b.soil_type}</span>
                   </div>
+                  {healthMissing && (
+                    <p className="text-xs text-amber-400 mt-2">⚠ Health score needed for last reading</p>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3">
                   {isActive ? (
-                    isSensing ? (
-                      <div className="flex items-center gap-2 text-emerald-400 font-medium animate-pulse">
-                        <span className="material-symbols-outlined animate-spin text-xl">refresh</span> Sensing...
-                      </div>
-                    ) : isCollected ? (
-                      /* After data is collected, show "View Data" which toggles the expanded panel */
-                      <button onClick={() => setExpandedBucket(isExpanded ? null : b.id)}
-                        className={`px-5 py-2.5 font-medium rounded-lg flex items-center gap-2 transition-all ${
-                          isExpanded 
-                            ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" 
-                            : "bg-white/10 hover:bg-white/15 text-white border border-white/10"
-                        }`}>
-                        <span className="material-symbols-outlined text-lg">{isExpanded ? "expand_less" : "visibility"}</span>
-                        {isExpanded ? "Hide Data" : "View Data"}
-                      </button>
-                    ) : (
-                      /* First time: show "Sense Now" */
-                      <button onClick={() => startSensorCollection(b)} disabled={processing}
-                        className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-lg flex items-center gap-2 disabled:opacity-50">
-                        <span className="material-symbols-outlined text-lg">sensors</span> 
-                        Sense Now
-                      </button>
-                    )
-                  ) : <span className="text-xs text-gray-600 italic">Experiment not active</span>}
+                    <div className="flex items-center gap-2">
+                      {/* 1. Sensing State */}
+                      {isSensing ? (
+                        <div className="flex items-center gap-2 text-emerald-400 font-medium animate-pulse">
+                          <span className="material-symbols-outlined animate-spin text-xl">refresh</span> Sensing...
+                        </div>
+                      ) : (
+                        <>
+                          {/* 2. Expand/Hide Data Toggle */}
+                          {isCollected && (
+                            <button onClick={() => setExpandedBucket(isExpanded ? null : b.id)}
+                              className={`px-5 py-2.5 font-medium rounded-lg flex items-center gap-2 transition-all ${
+                                isExpanded 
+                                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" 
+                                  : healthMissing
+                                    ? "bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse"
+                                    : "bg-white/10 hover:bg-white/15 text-white border border-white/10"
+                              }`}>
+                              <span className="material-symbols-outlined text-lg">{isExpanded ? "expand_less" : "visibility"}</span>
+                              {isExpanded ? "Hide" : healthMissing ? "Enter Health" : "View Data"}
+                            </button>
+                          )}
+
+                          {/* 3. Sense Now - ALWAYS visible, will block on click if health missing */}
+                          <button onClick={() => startSensorCollection(b)} disabled={!canSense}
+                            className="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-lg flex items-center gap-2 disabled:opacity-50">
+                            <span className="material-symbols-outlined text-lg">sensors</span> Sense Now
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-gray-600 italic">Experiment not active</span>
+                  )}
                 </div>
               </div>
 
-              {/* Expanded Data View — shown when "View Data" is clicked */}
+              {/* Expanded Data Panel */}
               {isCollected && isExpanded && (
-                <div className="px-5 pb-5 border-t border-white/10 space-y-4">
-                  {/* Sensor readings grid */}
-                  <div className="pt-4">
-                    <p className="text-xs text-gray-500 mb-3">
-                      Reading from: {b.sensor_data?.createdAt ? new Date(b.sensor_data.createdAt).toLocaleString() : "Unknown"}
+                <div className="px-5 pb-5 border-t border-white/10 space-y-5">
+
+                  {/* Timestamp + row ID */}
+                  <div className="pt-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                      <span className="material-symbols-outlined text-sm text-emerald-400">schedule</span>
+                      {b.sensor_data?.createdAt
+                        ? new Date(b.sensor_data.createdAt).toLocaleString()
+                        : "Unknown time"}
+                    </div>
+                    <span className="text-[10px] text-gray-600 font-mono">ID #{b.sensor_data?.id}</span>
+                  </div>
+
+                  {/* ── Soil Readings ── */}
+                  <div>
+                    <p className="text-[10px] text-emerald-500 uppercase font-bold tracking-widest mb-2 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-xs">grass</span> Soil
                     </p>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <MiniReading label="Soil pH" value={b.sensor_data?.ph} unit="" />
-                      <MiniReading label="Moisture" value={b.sensor_data?.moisture} unit="%" />
-                      <MiniReading label="Nitrogen" value={b.sensor_data?.nitrogen} unit="mg/kg" />
-                      <MiniReading label="Phosphorus" value={b.sensor_data?.phosphorus} unit="mg/kg" />
-                      <MiniReading label="Potassium" value={b.sensor_data?.potassium} unit="mg/kg" />
-                      <MiniReading label="Soil Temp" value={b.sensor_data?.temperature} unit="°C" />
-                      <MiniReading label="Soil EC" value={b.sensor_data?.ec} unit="dS/m" />
-                      <MiniReading label="Water pH" value={b.sensor_data?.waterPh} unit="" />
-                      <MiniReading label="Air Temp" value={b.sensor_data?.airTemp} unit="°C" />
-                      <MiniReading label="Air Humidity" value={b.sensor_data?.airHumidity} unit="%" />
+                      <MiniReading label="pH"        value={b.sensor_data?.ph}          unit=""      icon="science"     color="text-lime-400" />
+                      <MiniReading label="Moisture"  value={b.sensor_data?.moisture}    unit="%"     icon="water_drop"  color="text-blue-400" />
+                      <MiniReading label="Temp"      value={b.sensor_data?.temperature} unit="°C"   icon="thermostat"  color="text-orange-400" />
+                      <MiniReading label="EC"        value={b.sensor_data?.ec}          unit=" dS/m" icon="electrical_services" color="text-yellow-400" />
                     </div>
                   </div>
 
-                  {/* Health Score Input (0.00 - 1.00) */}
-                  <div className="pt-3 border-t border-white/5 space-y-3">
-                    <label className="text-[10px] text-emerald-400 font-bold uppercase tracking-widest block">
-                      Plant Health Score (0.00 – 1.00)
+                  {/* ── Nutrients ── */}
+                  <div>
+                    <p className="text-[10px] text-purple-400 uppercase font-bold tracking-widest mb-2 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-xs">biotech</span> Nutrients (mg/kg)
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <MiniReading label="Nitrogen"   value={b.sensor_data?.nitrogen}   unit=" mg/kg" icon="nitrogen"  color="text-purple-300" />
+                      <MiniReading label="Phosphorus" value={b.sensor_data?.phosphorus} unit=" mg/kg" icon="opacity"   color="text-pink-300" />
+                      <MiniReading label="Potassium"  value={b.sensor_data?.potassium}  unit=" mg/kg" icon="bolt"      color="text-indigo-300" />
+                    </div>
+                  </div>
+
+                  {/* ── Environment ── */}
+                  <div>
+                    <p className="text-[10px] text-sky-400 uppercase font-bold tracking-widest mb-2 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-xs">cloud</span> Environment
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      <MiniReading label="Water pH"     value={b.sensor_data?.waterPh}    unit=""    icon="water"      color="text-cyan-400" />
+                      <MiniReading label="Air Temp"     value={b.sensor_data?.airTemp}    unit="°C"  icon="device_thermostat" color="text-rose-300" />
+                      <MiniReading label="Air Humidity" value={b.sensor_data?.airHumidity} unit="%" icon="humidity_percentage" color="text-sky-300" />
+                    </div>
+                  </div>
+
+                  {/* Health Score Section */}
+                  <div className={`pt-4 border-t space-y-3 ${
+                    healthMissing
+                      ? "border-amber-500/30 bg-amber-500/5 -mx-5 px-5 pb-4 rounded-b-xl"
+                      : "border-white/5"
+                  }`}>
+                    <label className={`text-[10px] font-bold uppercase tracking-widest block ${
+                      healthMissing ? "text-amber-400" : "text-emerald-400"
+                    }`}>
+                      {healthMissing ? "⚠ Health Score Required" : "Plant Health Score"} (0.01 – 1.00)
                     </label>
                     <div className="flex items-center gap-3">
-                      <input type="number" min="0" max="1" step="0.01" placeholder="e.g. 0.75"
-                        value={healthInputs[b.id] ?? (b.sensor_data?.health !== null && b.sensor_data?.health !== undefined ? b.sensor_data.health : "")}
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="e.g. 0.75"
+                        value={healthInputs[b.id] ?? (b.sensor_data?.health ? String(b.sensor_data.health) : "")}
                         onChange={(e) => setHealthInputs(p => ({ ...p, [b.id]: e.target.value }))}
-                        className="bg-slate-900 border border-white/10 rounded-lg px-3 py-2 text-sm w-36 focus:border-emerald-500 outline-none text-white" />
-                      <button onClick={() => submitHealth(b.id, b.sensor_data?.id)} disabled={updatingHealth === b.id}
-                        className="px-4 py-2 bg-emerald-500/20 text-emerald-400 text-xs font-bold rounded-lg border border-emerald-500/40 hover:bg-emerald-500/30 disabled:opacity-50 transition-all">
-                        {updatingHealth === b.id ? "Saving..." : "Save Health Score"}
+                        className={`border rounded-lg px-3 py-2 text-sm w-36 outline-none text-white ${
+                          healthMissing
+                            ? "bg-amber-900/30 border-amber-500/50 focus:border-amber-400"
+                            : "bg-slate-900 border-white/10 focus:border-emerald-500"
+                        }`}
+                      />
+                      <button onClick={() => submitHealth(b.id)} disabled={updatingHealth === b.id}
+                        className={`px-4 py-2 text-xs font-bold rounded-lg border disabled:opacity-50 transition-all ${
+                          healthMissing
+                            ? "bg-amber-500 hover:bg-amber-600 text-white border-amber-600"
+                            : "bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30"
+                        }`}>
+                        {updatingHealth === b.id
+                          ? <span className="flex items-center gap-1"><span className="material-symbols-outlined text-sm animate-spin">refresh</span> Verifying…</span>
+                          : healthMissing ? "Save & Unlock Sensing" : "Update Score"}
                       </button>
                     </div>
-                    {(b.sensor_data?.health === null || b.sensor_data?.health === undefined) && (
-                      <p className="text-xs text-amber-400 flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-sm">warning</span>
-                        You must record a health score before you can sense again.
+                    {healthMissing && (
+                      <p className="text-xs text-amber-300/70">
+                        You must save a health score for this reading before you can sense again.
                       </p>
                     )}
-                  </div>
-
-                  {/* Sense Again — only enabled if health score has been saved */}
-                  <div className="flex items-center justify-between pt-3 border-t border-white/5">
-                    <p className="text-xs text-gray-500">Want to take a fresh reading for this tub?</p>
-                    <button 
-                      onClick={() => {
-                        setExpandedBucket(null);
-                        startSensorCollection(b);
-                      }} 
-                      disabled={processing || b.sensor_data?.health === null || b.sensor_data?.health === undefined}
-                      className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all">
-                      <span className="material-symbols-outlined text-base">sensors</span> 
-                      Sense Now
-                    </button>
+                    {!healthMissing && b.sensor_data?.health != null && b.sensor_data?.health !== 0 && (
+                      <p className="text-xs text-green-400 flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-sm">check_circle</span>
+                        Health recorded: <strong>{b.sensor_data.health}</strong> — sensing is unlocked.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -745,29 +933,125 @@ const ExperimentDetails = ({ experiment: initExp, onBack }) => {
 const HistoryTab = () => {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase.from("sensor_data").select("*").order("created_at", { ascending: false }).limit(20);
-      if (!error) setHistory(data || []);
-      setLoading(false);
-    })();
-  }, []);
+  const fetchHistory = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("sensor_data")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (!error) setHistory(data || []);
+    setLoading(false);
+  };
 
-  if (loading) return <div className="text-center py-16 text-gray-400">Loading history...</div>;
+  useEffect(() => { fetchHistory(); }, []);
+
+  const displayed = filter
+    ? history.filter(sd => String(sd.tub_id).includes(filter) || String(sd.sensor_id).includes(filter))
+    : history;
+
+  const healthColor = (h) => {
+    if (!h || h === 0) return "bg-amber-500/20 text-amber-400 border-amber-500/30";
+    if (h >= 0.7)      return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
+    if (h >= 0.4)      return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30";
+    return               "bg-red-500/20 text-red-400 border-red-500/30";
+  };
+
+  if (loading) return (
+    <div className="text-center py-16 text-gray-400 flex flex-col items-center gap-3">
+      <span className="material-symbols-outlined text-4xl animate-spin">refresh</span>
+      Loading history...
+    </div>
+  );
 
   return (
-    <div className="space-y-3">
-      {history.map((sd) => (
-        <div key={sd.id} className="bg-white/5 border border-white/10 rounded-xl p-4">
-          <div className="flex justify-between text-xs text-gray-500 mb-2">
-            <span className="font-bold text-gray-300 uppercase">Tub {sd.tub_id} ({sd.sensor_id})</span>
-            <span>{new Date(sd.created_at).toLocaleString()}</span>
+    <div className="space-y-4">
+      {/* Controls */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-xs">
+          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-lg">search</span>
+          <input
+            type="text"
+            placeholder="Filter by tub or sensor ID…"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white placeholder-gray-600 outline-none focus:border-emerald-500 transition-colors"
+          />
+        </div>
+        <button onClick={fetchHistory}
+          className="px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-xs text-gray-400 hover:text-white hover:bg-white/10 flex items-center gap-2 transition-colors">
+          <span className="material-symbols-outlined text-sm">refresh</span> Refresh
+        </button>
+        <span className="text-xs text-gray-600">{displayed.length} record{displayed.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      {/* Cards */}
+      {displayed.length === 0 ? (
+        <div className="text-center py-16">
+          <span className="material-symbols-outlined text-5xl text-gray-600 mb-3 block">sensor_occupied</span>
+          <p className="text-gray-500">No readings match your filter.</p>
+        </div>
+      ) : displayed.map((sd) => (
+        <div key={sd.id} className="bg-white/[0.03] border border-white/10 hover:border-white/20 rounded-2xl p-5 transition-all space-y-4">
+
+          {/* Header row */}
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-emerald-400 text-lg">sensors</span>
+                <span className="font-bold text-white text-sm">Tub {sd.tub_id}</span>
+                <span className="text-xs text-gray-500 font-mono bg-white/5 px-2 py-0.5 rounded">#{sd.id}</span>
+                {sd.sensor_id && (
+                  <span className="text-xs text-gray-500">via <span className="text-gray-400">{sd.sensor_id}</span></span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 mt-1 text-xs text-gray-500">
+                <span className="material-symbols-outlined text-xs">schedule</span>
+                {new Date(sd.created_at).toLocaleString()}
+              </div>
+            </div>
+            <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
+              !sd.health || sd.health === 0
+                ? healthColor(sd.health)
+                : healthColor(sd.health)
+            }`}>
+              {!sd.health || sd.health === 0
+                ? "⚠ No Health Score"
+                : `Health: ${Number(sd.health).toFixed(2)}`}
+            </span>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <span className="bg-white/5 px-2 py-1 rounded text-xs">pH: {sd.soil_ph}</span>
-            <span className="bg-white/5 px-2 py-1 rounded text-xs">Moist: {sd.soil_moisture}%</span>
-            <span className="bg-white/5 px-2 py-1 rounded text-xs">Temp: {sd.soil_temp}°C</span>
+
+          {/* Soil */}
+          <div>
+            <p className="text-[10px] text-emerald-500/80 uppercase font-bold tracking-widest mb-2">🌱 Soil</p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <MiniReading label="pH"       value={sd.soil_ph}       unit=""       icon="science"            color="text-lime-400" />
+              <MiniReading label="Moisture" value={sd.soil_moisture} unit="%"      icon="water_drop"         color="text-blue-400" />
+              <MiniReading label="Temp"     value={sd.soil_temp}     unit="°C"     icon="thermostat"         color="text-orange-400" />
+              <MiniReading label="EC"       value={sd.soil_ec}       unit=" dS/m"  icon="electrical_services" color="text-yellow-400" />
+            </div>
+          </div>
+
+          {/* Nutrients */}
+          <div>
+            <p className="text-[10px] text-purple-400/80 uppercase font-bold tracking-widest mb-2">💊 Nutrients (mg/kg)</p>
+            <div className="grid grid-cols-3 gap-2">
+              <MiniReading label="Nitrogen"   value={sd.nitrogen}   unit=" mg/kg" icon="science"  color="text-purple-300" />
+              <MiniReading label="Phosphorus" value={sd.phosphorus} unit=" mg/kg" icon="opacity"  color="text-pink-300" />
+              <MiniReading label="Potassium"  value={sd.potassium}  unit=" mg/kg" icon="bolt"     color="text-indigo-300" />
+            </div>
+          </div>
+
+          {/* Environment */}
+          <div>
+            <p className="text-[10px] text-sky-400/80 uppercase font-bold tracking-widest mb-2">🌤 Environment</p>
+            <div className="grid grid-cols-3 gap-2">
+              <MiniReading label="Water pH"   value={sd.water_ph}     unit=""    icon="water"               color="text-cyan-400" />
+              <MiniReading label="Air Temp"   value={sd.air_temp}     unit="°C"  icon="device_thermostat"   color="text-rose-300" />
+              <MiniReading label="Humidity"   value={sd.air_humidity} unit="%"   icon="humidity_percentage" color="text-sky-300" />
+            </div>
           </div>
         </div>
       ))}
@@ -837,12 +1121,17 @@ export default function ExperimentsPage() {
   );
 }
 
-// Utility component for compact data display
-const MiniReading = ({ label, value, unit }) => (
-  <div className="bg-white/5 border border-white/10 rounded-lg p-2 text-center">
-    <div className="text-[10px] text-gray-500 uppercase font-bold">{label}</div>
-    <div className="text-xs font-semibold text-white">
-      {value !== null && value !== undefined ? `${value}${unit}` : "—"}
+// Utility component for compact sensor reading display with icon + colour accent
+const MiniReading = ({ label, value, unit, icon, color = "text-gray-300" }) => (
+  <div className="bg-white/5 border border-white/10 rounded-lg p-2.5 flex flex-col gap-1">
+    <div className="flex items-center gap-1 text-[10px] text-gray-500 uppercase font-bold tracking-wider">
+      {icon && <span className={`material-symbols-outlined text-xs ${color}`}>{icon}</span>}
+      {label}
+    </div>
+    <div className={`text-sm font-bold ${color}`}>
+      {value !== null && value !== undefined && value !== 0
+        ? `${Number(value).toFixed(2)}${unit}`
+        : <span className="text-gray-600">—</span>}
     </div>
   </div>
 );

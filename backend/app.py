@@ -93,12 +93,14 @@ def get_table(table_name):
     """
     if table_name in TABLE_SCHEMAS:
         schema_name = TABLE_SCHEMAS[table_name]
-        return supabase.schema(schema_name).table(table_name) if schema_name != 'public' else supabase.table(table_name)
+        return supabase.schema(schema_name).table(table_name)
     
     # Check each potential schema
     for schema_name in ["experiment", "public"]:
         try:
-            target = supabase.schema(schema_name) if schema_name != 'public' else supabase
+            # supabase.schema() mutates the underlying postgrest client.
+            # We MUST explicitly call schema("public") to switch it back!
+            target = supabase.schema(schema_name)
             # Verify table existence with a no-op select
             target.table(table_name).select("*").limit(0).execute()
             TABLE_SCHEMAS[table_name] = schema_name
@@ -107,8 +109,8 @@ def get_table(table_name):
         except Exception:
             continue
             
-    # Default to 'experiment' schema if discovery fails
-    return supabase.schema('experiment').table(table_name)
+    # Default to 'public' schema if discovery fails
+    return supabase.schema('public').table(table_name)
 
 # --------------------------------------------------------------------------------
 # EXPERIMENTS & TUBS API
@@ -132,7 +134,7 @@ def create_experiment():
     data = request.json
     try:
         # Get latest ID to increment (workaround for sequence permission issues)
-        max_id_res = get_table('experiments').select("id").order("id", descending=True).limit(1).execute()
+        max_id_res = get_table('experiments').select("id").order("id", desc=True).limit(1).execute()
         next_id = max_id_res.data[0]["id"] + 1 if max_id_res.data else 1
 
         insert_payload = {
@@ -250,20 +252,17 @@ def get_tubs():
 
 @app.route("/api/health-check", methods=["GET"])
 def health_check():
-    """Verifies backend and database connectivity for the frontend"""
-    try:
-        get_table('experiments')
-        return jsonify({
-            "success": True, 
-            "status": "connected",
-            "message": "Backend and Database are reachable"
-        }), 200
-    except Exception as e:
-        return jsonify({
-            "success": True, 
-            "status": "partial_error",
-            "message": f"Server is up but DB check failed: {str(e)}"
-        }), 200
+    """Verifies backend connectivity for the frontend.
+    NOTE: We intentionally do NOT call get_table() here because it mutates
+    the global Supabase schema, which breaks concurrent requests to tables
+    in other schemas (e.g. public.sensor_data while schema is set to 'experiment').
+    The server being up and responding is sufficient proof of connectivity.
+    """
+    return jsonify({
+        "success": True,
+        "status": "connected",
+        "message": "Backend is reachable"
+    }), 200
 
 @app.route("/api/experiments/<int:exp_id>", methods=["PATCH"])
 def update_experiment(exp_id):
@@ -295,15 +294,14 @@ def get_experiment(id):
         if not exp_res.data:
             return jsonify({"success": False, "message": "Experiment not found"}), 404
         exp = exp_res.data[0]
-        
+
         tubs_res = get_table('tubs').select("*").eq("experiment_id", id).execute()
         tubs = tubs_res.data or []
-        
+
         buckets = []
         for idx, tub in enumerate(tubs):
-            # Fetch latest sensor reading for this specific tub
-            sensor_res = get_table('sensor_data').select("*").eq("tub_id", tub["id"]).order("created_at", descending=True).limit(1).execute()
-            
+            sensor_res = get_table('sensor_data').select("*").eq("tub_id", tub["id"]).order("created_at", desc=True).limit(1).execute()
+
             sensor_data = None
             if sensor_res.data:
                 sd = sensor_res.data[0]
@@ -320,27 +318,28 @@ def get_experiment(id):
                     "waterPh": sd.get("water_ph"),
                     "airTemp": sd.get("air_temp"),
                     "airHumidity": sd.get("air_humidity"),
-                    "createdAt": sd.get("created_at")
+                    "createdAt": sd.get("created_at"),
                 }
-                
+
             buckets.append({
                 "id": tub["id"],
                 "bucket_number": tub.get("label", f"Bucket {idx+1}"),
                 "soil_type": tub.get("soil_type"),
                 "plant_type": tub.get("plant_name"),
                 "status": "Data Collected" if sensor_data else "Waiting",
-                "sensor_data": sensor_data
+                "sensor_data": sensor_data,
             })
-            
+
         return jsonify({
-            "success": True, 
+            "success": True,
             "experiment": {
                 **exp,
                 "experiment_number": f"EXP-{exp['id']}",
-                "buckets": buckets
+                "buckets": buckets,
             }
         }), 200
     except Exception as e:
+        print(f"[DEBUG] get_experiment error: {e}")
         return jsonify({"success": False, "message": str(e)}), 400
 
 @app.route("/api/experiments/<int:experiment_id>/buckets", methods=["POST"])
@@ -405,7 +404,7 @@ def get_latest_bucket_data(id):
     """Polls for the latest sensor data for a tub, optionally since a given timestamp."""
     since = request.args.get("since", "").replace(" ", "+")
     try:
-        query = get_table('sensor_data').select("*").eq("tub_id", id).order("created_at", descending=True).limit(1)
+        query = get_table('sensor_data').select("*").eq("tub_id", id).order("created_at", desc=True).limit(1)
         if since:
             query = query.gte("created_at", since)
             
@@ -429,6 +428,84 @@ def get_latest_bucket_data(id):
             
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
+
+@app.route("/api/sensor_data/<int:tub_id>/health", methods=["PATCH"])
+def update_sensor_health(tub_id):
+    """
+    Sets the `health` column on ALL sensor_data rows for a given tub
+    where health is currently 0 (the DB default = "not yet scored").
+
+    Uses direct REST API to avoid supabase-py schema-mutation thread issues.
+
+    Request body: { "health": 0.75 }
+    """
+    import requests as http_requests
+
+    data = request.json or {}
+    health_val = data.get("health")
+
+    if health_val is None:
+        return jsonify({"success": False, "message": "health value is required"}), 400
+
+    try:
+        health_float = float(health_val)
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "message": "health must be a number"}), 400
+
+    if not (0.0 < health_float <= 1.0):
+        return jsonify({"success": False, "message": "health must be between 0.01 and 1"}), 400
+
+    try:
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Content-Profile": "public",
+            "Prefer": "return=representation",
+        }
+        
+        # 1. Get the absolute latest reading for this tub
+        get_url = f"{SUPABASE_URL}/rest/v1/sensor_data?tub_id=eq.{tub_id}&order=created_at.desc&limit=1"
+        get_resp = http_requests.get(get_url, headers=headers)
+        
+        rows = get_resp.json() if get_resp.status_code == 200 and get_resp.text.strip() else []
+        
+        if not rows:
+            return jsonify({"success": False, "message": f"No sensor readings found for tub {tub_id}"}), 404
+
+        latest_row = rows[0]
+        # health column is float4, but we check if it's 0 (the default)
+        current_health = latest_row.get("health", 0)
+
+        if current_health != 0:
+            return jsonify({
+                "success": False, 
+                "message": f"The latest reading for tub {tub_id} (ID {latest_row['id']}) already has a score of {current_health}. No update needed."
+            }), 400
+
+        target_row_id = latest_row["id"]
+        print(f"[DEBUG] Updating latest row {target_row_id} (health was 0) for tub {tub_id}")
+
+        # 2. Update that specific row
+        patch_url = f"{SUPABASE_URL}/rest/v1/sensor_data?id=eq.{target_row_id}"
+        resp = http_requests.patch(patch_url, headers=headers, json={"health": health_float})
+        
+        if resp.status_code in (200, 204):
+            updated_rows = resp.json() if resp.text.strip() else []
+            return jsonify({
+                "success": True, 
+                "message": f"Updated row {target_row_id} from 0 to {health_float}",
+                "updated_count": len(updated_rows)
+            }), 200
+        else:
+            return jsonify({"success": False, "message": resp.text}), resp.status_code
+    except Exception as e:
+        print(f"[DEBUG] health PATCH error: {e}")
+        return jsonify({"success": False, "message": str(e)}), 400
+    except Exception as e:
+        print(f"[DEBUG] health PATCH error: {e}")
+        return jsonify({"success": False, "message": str(e)}), 400
+
 
 if __name__ == "__main__":
     # Run server on all interfaces for network accessibility
