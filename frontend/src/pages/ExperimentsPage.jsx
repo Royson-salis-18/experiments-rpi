@@ -24,7 +24,7 @@ async function checkBackendHealth() {
     const res = await fetch(`${API_URL}/health-check`, { 
       method: 'GET',
       headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(5000) 
+      signal: AbortSignal.timeout(60000) 
     });
     const data = await res.json();
     return data.success;
@@ -374,7 +374,7 @@ const ExperimentsListTab = () => {
       if (data.success) setExperiments(data.experiments);
       else throw new Error(data.message);
     } catch (err) {
-      setError(`Could not load experiments. Backend might be offline.`);
+      setError(`Could not load experiments: ${err.message}`);
     }
     setLoading(false);
   };
