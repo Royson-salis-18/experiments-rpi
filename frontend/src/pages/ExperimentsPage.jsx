@@ -10,11 +10,8 @@ import { supabase } from "../supabaseClient";
  * to experiment buckets, triggering of sensor readings, and viewing results.
  */
 
-// API Configuration - attempts to read from env or defaults to localhost
-const rawUrl = import.meta.env.VITE_API_URL;
-const API_URL = (rawUrl && rawUrl.trim() !== "") 
-  ? rawUrl 
-  : `https://exp-nutritech-backend-xead.onrender.com/api`;
+// Hardcoded backend URL to bypass stale environment variables in Render
+const API_URL = "https://exp-nutritech-backend-xead.onrender.com/api";
 
 /**
  * Pings the backend to check if it's reachable
