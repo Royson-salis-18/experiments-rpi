@@ -14,7 +14,7 @@ import { supabase } from "../supabaseClient";
 const rawUrl = import.meta.env.VITE_API_URL;
 const API_URL = (rawUrl && rawUrl.trim() !== "") 
   ? rawUrl 
-  : `${window.location.protocol}//127.0.0.1:5000/api`;
+  : `https://exp-nutritech-backend-xead.onrender.com/api`;
 
 /**
  * Pings the backend to check if it's reachable
